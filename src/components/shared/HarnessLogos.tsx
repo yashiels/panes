@@ -117,6 +117,14 @@ export function getHarnessIcon(id: string, size = 16): ReactNode {
       return <span style={style}><AntigravityLogo size={size} /></span>;
     case "kiro":
       return <span style={style}><KiroLogo size={size} /></span>;
+    case "hermes":
+      return (
+        <span style={style}>
+          <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M7 4v16M17 4v16M7 12h10M3 5l4 3M21 5l-4 3M3 9l4 3M21 9l-4 3" />
+          </svg>
+        </span>
+      );
     case "opencode":
       return <span style={style}><OpenCodeLogo size={size} /></span>;
     case "kilo-code":

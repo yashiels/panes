@@ -11,6 +11,7 @@ export const CHAT_ENGINE_INSTALL_HARNESS_IDS: Readonly<Record<OnboardingChatEngi
   codex: "codex",
   claude: "claude-code",
   opencode: "opencode",
+  hermes: "hermes",
 };
 
 const CODEX_AUTH_ERROR_MARKERS = [

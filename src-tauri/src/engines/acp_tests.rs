@@ -668,3 +668,312 @@ async fn acp_closed_event_consumer_fails_and_reaps() {
     assert!(process.reaped.is_cancelled());
     fixture.stop(&session).await;
 }
+
+#[test]
+fn acp_hermes_recorded_models_and_permission_diff() {
+    let frames: Vec<Value> = include_str!("../../tests/fixtures/acp/hermes-text.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let response = frames
+        .iter()
+        .find(|frame| frame["result"]["models"].is_object())
+        .unwrap();
+    let models = super::super::hermes::session_models(&response["result"])
+        .unwrap()
+        .unwrap();
+    assert!(models
+        .available_models
+        .iter()
+        .any(|model| model.model_id == models.current_model_id));
+    let frames: Vec<Value> = include_str!("../../tests/fixtures/acp/hermes-permission.jsonl")
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let request = frames
+        .iter()
+        .find(|frame| frame["method"] == "session/request_permission")
+        .unwrap();
+    let permission: acp::RequestPermissionRequest =
+        serde_json::from_value(request["params"].clone()).unwrap();
+    let diff = content_diff(permission.tool_call.fields.content.as_ref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert!(diff.contains("+Fixture edit."));
+    assert!(diff.contains("sample.txt"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn acp_hermes_profile_selected_model_and_text_turn() {
+    use std::os::unix::fs::PermissionsExt;
+    let python = which::which("python3").unwrap();
+    let directory = std::env::temp_dir().join(format!("panes-hermes-test-{}", Uuid::new_v4()));
+    std::fs::create_dir(&directory).unwrap();
+    let executable = directory.join("hermes");
+    let log = directory.join("requests.jsonl");
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+    std::fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\nexec {} {} hermes {}\n",
+            quote(&python.to_string_lossy()),
+            quote(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/acp/fake_server.py"
+            )),
+            quote(&log.to_string_lossy())
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config = crate::config::app_config::AppConfig {
+        chat_providers: vec![crate::config::app_config::ChatProviderInstanceConfig {
+            id: "hermes_work".into(),
+            kind: "hermes".into(),
+            display_name: "Hermes Work".into(),
+            binary_path: Some(executable.to_string_lossy().into_owned()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let manager = super::super::EngineManager::from_config(&config);
+    let handle = manager.handle("hermes_work").await.unwrap();
+    assert_eq!(handle.kind(), "hermes");
+    let engine = match handle {
+        super::super::EngineHandle::Acp(engine) => engine,
+        _ => panic!("Hermes ACP handle"),
+    };
+    let thread = engine
+        .start_thread(
+            ThreadScope::Repo {
+                repo_path: directory.to_string_lossy().into_owned(),
+            },
+            None,
+            "default",
+            sandbox(),
+        )
+        .await
+        .unwrap();
+    let selected = engine
+        .models()
+        .into_iter()
+        .find(|model| model.id.starts_with("opencode-free:"))
+        .unwrap();
+    engine
+        .start_thread(
+            ThreadScope::Repo {
+                repo_path: directory.to_string_lossy().into_owned(),
+            },
+            Some(&thread.engine_thread_id),
+            &selected.id,
+            sandbox(),
+        )
+        .await
+        .unwrap();
+    let (sender, mut receiver) = mpsc::channel(64);
+    let runner = engine.clone();
+    let session = thread.engine_thread_id.clone();
+    let task = tokio::spawn(async move {
+        runner
+            .send_message(
+                &session,
+                TurnInput {
+                    input_items: vec![super::super::TurnInputItem::Text {
+                        text: "fixture".into(),
+                    }],
+                    ..input()
+                },
+                sender,
+                CancellationToken::new(),
+            )
+            .await
+    });
+    let mut events = vec![];
+    timeout(Duration::from_secs(15), async {
+        while let Some(event) = receiver.recv().await {
+            if let EngineEvent::ApprovalRequested { approval_id, .. } = &event {
+                engine
+                    .respond_to_approval(
+                        approval_id,
+                        json!({"optionId":"original/allow-once"}),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            events.push(event);
+        }
+    })
+    .await
+    .unwrap();
+    task.await.unwrap().unwrap();
+    terminal(&events, TurnCompletionStatus::Completed);
+    let text: String = events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::TextDelta { content } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text, "hello world");
+    engine
+        .archive_thread(&thread.engine_thread_id)
+        .await
+        .unwrap();
+    let requests: Vec<Value> = std::fs::read_to_string(log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|frame| frame["method"] == "session/new")
+            .count(),
+        1
+    );
+    assert!(requests
+        .iter()
+        .any(|frame| frame["method"] == "session/set_model"
+            && frame["params"]["modelId"] == selected.id));
+    assert!(requests
+        .iter()
+        .any(|frame| frame["method"] == "session/prompt"
+            && frame["params"]["prompt"][0]["text"] == "fixture"));
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires installed Hermes and a configured model endpoint"]
+async fn acp_hermes_real_profile_smoke() {
+    let executable = std::env::var_os("PANES_HERMES_SMOKE_COMMAND").expect("Hermes executable");
+    let directory = std::env::temp_dir().join(format!("panes-hermes-live-{}", Uuid::new_v4()));
+    std::fs::create_dir(&directory).unwrap();
+    let engine = Arc::new(AcpEngine::hermes(
+        "hermes",
+        "Hermes",
+        super::super::EngineInstanceSettings {
+            binary_path: Some(executable.into()),
+            ..Default::default()
+        },
+    ));
+    let health = engine.health_report().await;
+    assert!(health.available, "{:?}", health.details);
+    let thread = engine
+        .start_thread(
+            ThreadScope::Repo {
+                repo_path: directory.to_string_lossy().into_owned(),
+            },
+            None,
+            "default",
+            sandbox(),
+        )
+        .await
+        .unwrap();
+    let session = thread.engine_thread_id.clone();
+    let runner = engine.clone();
+    let (sender, mut receiver) = mpsc::channel(64);
+    let task = tokio::spawn(async move {
+        runner
+            .send_message(
+                &session,
+                TurnInput {
+                    message: "Reply with Hermes ACP fixture ok. Do not use tools.".into(),
+                    input_items: vec![],
+                    ..input()
+                },
+                sender,
+                CancellationToken::new(),
+            )
+            .await
+    });
+    let events = timeout(Duration::from_secs(90), async {
+        let mut events = vec![];
+        while let Some(event) = receiver.recv().await {
+            events.push(event);
+        }
+        events
+    })
+    .await
+    .unwrap();
+    task.await.unwrap().unwrap();
+    engine
+        .archive_thread(&thread.engine_thread_id)
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    terminal(&events, TurnCompletionStatus::Completed);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, EngineEvent::TextDelta { content } if !content.is_empty())));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn acp_hermes_configuration_change_reaps_initializing_sessions() {
+    use std::os::unix::fs::PermissionsExt;
+    for resume in [None, Some("previous-session")] {
+        let python = which::which("python3").unwrap();
+        let directory = std::env::temp_dir().join(format!("panes-hermes-race-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let executable = directory.join("hermes");
+        let log = directory.join("requests.jsonl");
+        let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+        std::fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\nexec {} {} slow_init {}\n",
+                quote(&python.to_string_lossy()),
+                quote(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/acp/fake_server.py"
+                )),
+                quote(&log.to_string_lossy())
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let settings = super::super::EngineInstanceSettings {
+            binary_path: Some(executable),
+            ..Default::default()
+        };
+        let engine = Arc::new(AcpEngine::hermes("hermes", "Hermes", settings.clone()));
+        let runner = engine.clone();
+        let cwd = directory.clone();
+        let task = tokio::spawn(async move {
+            runner
+                .start_thread(
+                    ThreadScope::Repo {
+                        repo_path: cwd.to_string_lossy().into_owned(),
+                    },
+                    resume,
+                    "default",
+                    sandbox(),
+                )
+                .await
+        });
+        timeout(Duration::from_secs(5), async {
+            while !log.exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut replacement = settings;
+        replacement.env.insert("NEW_ACCOUNT".into(), "1".into());
+        engine.update_instance_settings(replacement).await;
+        let error = timeout(Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("configuration changed"),
+            "{error}"
+        );
+        assert!(engine.sessions.lock().unwrap().is_empty());
+        assert!(engine.models().iter().all(|model| model.id == "default"));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}

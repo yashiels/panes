@@ -674,7 +674,9 @@ const AUTONOMY_PRESET_IDS: [&str; 5] = ["inherit", "read-only", "ask", "auto", "
 fn available_autonomy_presets(engine_id: &str) -> &'static [&'static str] {
     // OpenCode exposes approvals only, and its `allow` mode never asks, so a
     // sandboxed "auto in workspace" rung does not exist there.
-    if engine_kind(&engine_id) == "opencode" {
+    if engine_kind(engine_id) == "hermes" {
+        &["inherit"]
+    } else if engine_kind(engine_id) == "opencode" {
         &["inherit", "read-only", "ask", "full"]
     } else {
         &AUTONOMY_PRESET_IDS
@@ -712,6 +714,9 @@ fn autonomy_policy_for_preset(
 ) -> Result<AutonomyPresetPolicy, String> {
     let preset = resolve_autonomy_preset_for_engine(engine_id, requested_preset);
     let policy = match engine_kind(engine_id) {
+        "hermes" => {
+            return Err("Hermes permissions are requested individually through ACP".to_string())
+        }
         "opencode" => AutonomyPresetPolicy {
             approval_policy: json!(match preset {
                 "read-only" => "deny",
@@ -871,7 +876,10 @@ async fn create_thread_inner(
         metadata.insert("serviceTier".to_string(), json!(value));
     }
 
-    if let Some(preset) = initial_autonomy_preset.as_deref() {
+    if let Some(preset) = initial_autonomy_preset
+        .as_deref()
+        .filter(|preset| resolve_autonomy_preset_for_engine(&engine_id, preset) != "inherit")
+    {
         let codex_external_sandbox =
             engine_kind(&engine_id) == "codex" && state.engines.codex_uses_external_sandbox().await;
         let policy = autonomy_policy_for_preset(&engine_id, preset, codex_external_sandbox)?;
@@ -2384,15 +2392,10 @@ async fn build_codex_branch_context(
         SandboxPolicy {
             writable_roots,
             allow_network,
-            approval_policy: Some(approval_policy_override.unwrap_or_else(|| {
-                Value::String(
-                    approval_policy_for_engine_and_trust_level(
-                        thread.engine_id.as_str(),
-                        &trust_level,
-                    )
-                    .to_string(),
-                )
-            })),
+            approval_policy: approval_policy_override.or_else(|| {
+                approval_policy_for_engine_and_trust_level(thread.engine_id.as_str(), &trust_level)
+                    .map(|policy| Value::String(policy.to_string()))
+            }),
             permission_profile,
             approvals_reviewer: thread_approvals_reviewer(thread.engine_metadata.as_ref()),
             reasoning_effort: thread_reasoning_effort(thread.engine_metadata.as_ref()),
@@ -2553,8 +2556,9 @@ fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
 fn approval_policy_for_engine_and_trust_level(
     engine_id: &str,
     trust_level: &TrustLevelDto,
-) -> &'static str {
-    match engine_kind(engine_id) {
+) -> Option<&'static str> {
+    Some(match engine_kind(engine_id) {
+        "hermes" => return None,
         "claude" => match trust_level {
             TrustLevelDto::Trusted => "trusted",
             TrustLevelDto::Standard => "standard",
@@ -2568,7 +2572,7 @@ fn approval_policy_for_engine_and_trust_level(
             TrustLevelDto::Trusted | TrustLevelDto::Standard => "on-request",
             TrustLevelDto::Restricted => "untrusted",
         },
-    }
+    })
 }
 
 fn allow_network_for_trust_level(trust_level: &TrustLevelDto) -> bool {
@@ -2580,6 +2584,7 @@ fn thread_approval_policy_override_value(
     metadata: Option<&Value>,
 ) -> Result<Option<Value>, String> {
     match engine_kind(engine_id) {
+        "hermes" => Ok(None),
         "claude" => Ok(metadata
             .and_then(|value| value.get("claudePermissionMode"))
             .and_then(Value::as_str)
@@ -2860,6 +2865,7 @@ fn normalize_thread_approval_policy_for_engine(
     };
 
     match engine_kind(engine_id) {
+        "hermes" => Err("Hermes permissions are requested individually through ACP".to_string()),
         "claude" => {
             let normalized = value
                 .as_str()
@@ -3360,6 +3366,29 @@ mod tests {
     impl Drop for TempGitRepo {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn hermes_autonomy_presets_inherit_runtime_permissions() {
+        for id in ["hermes", "hermes_work"] {
+            assert_eq!(available_autonomy_presets(id), &["inherit"]);
+            for preset in AUTONOMY_PRESET_IDS {
+                assert_eq!(resolve_autonomy_preset_for_engine(id, preset), "inherit");
+            }
+            assert!(normalize_thread_approval_policy_for_engine(id, Some(json!("never"))).is_err());
+            assert_eq!(
+                thread_approval_policy_override_value(
+                    id,
+                    Some(&json!({"sandboxApprovalPolicy": "never"}))
+                )
+                .unwrap(),
+                None
+            );
+            assert_eq!(
+                approval_policy_for_engine_and_trust_level(id, &TrustLevelDto::Trusted),
+                None
+            );
         }
     }
 

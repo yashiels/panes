@@ -1,3 +1,4 @@
+import { engineKind } from "../../lib/engineKind";
 import type { EngineCapabilities } from "../../types";
 
 const CODEX_CAPABILITIES: EngineCapabilities = {
@@ -25,11 +26,17 @@ const EMPTY_CAPABILITIES: EngineCapabilities = {
 };
 
 function fallbackEngineCapabilities(engineId?: string | null): EngineCapabilities {
-  switch (engineId) {
+  switch (engineKind(engineId)) {
     case "codex":
       return CODEX_CAPABILITIES;
     case "claude":
       return CLAUDE_CAPABILITIES;
+    case "hermes":
+      return {
+        permissionModes: [],
+        sandboxModes: [],
+        approvalDecisions: ["cancel"],
+      };
     case "opencode":
       return OPENCODE_CAPABILITIES;
     default:

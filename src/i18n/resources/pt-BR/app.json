@@ -177,7 +177,8 @@
       "codexReview": "Iniciar revisão Codex",
       "settleThread": "Concluir thread",
       "unsettleThread": "Retomar thread",
-      "markThreadUnread": "Marcar thread como não lida"
+      "markThreadUnread": "Marcar thread como não lida",
+      "hermesSetup": "Configurar Hermes"
     },
     "descriptions": {
       "switchThread": "Navegue pelas threads recentes",
@@ -185,7 +186,8 @@
       "codexFork": "Criar uma nova ramificação a partir da thread atual",
       "codexCompact": "Comprimir a janela de contexto da thread",
       "codexRollback": "Desfazer as rodadas mais recentes",
-      "codexReview": "Revisar alterações não commitadas com o Codex"
+      "codexReview": "Revisar alterações não commitadas com o Codex",
+      "hermesSetup": "Gerencie a instalação, o diretório de configuração e a conta do Hermes"
     },
     "group": {
       "search": "Busca",
@@ -447,7 +449,8 @@
       "kiro": "CLI de coding da AWS focada em fluxos mais estruturados no estilo agent",
       "opencode": "Assistente de código open source para chat, edições e fluxos no terminal",
       "kilo-code": "CLI leve de assistência de código para tarefas do dia a dia no repo",
-      "factory-droid": "Coding agent autônomo da Factory para implementações maiores"
+      "factory-droid": "Coding agent autônomo da Factory para implementações maiores",
+      "hermes": "Hermes Agent da Nous Research, com chat, ferramentas e solicitações de permissão"
     }
   },
   "editor": {
@@ -663,7 +666,7 @@
     },
     "chat": {
       "providers": "Provedores",
-      "providersDescription": "Cada provedor é uma instalação ou conta do Codex ou do Claude. Adicione um para usar uma segunda conta lado a lado.",
+      "providersDescription": "Cada provedor é uma instalação ou conta do Codex, Claude ou Hermes. Adicione um para usar uma segunda conta lado a lado.",
       "addProvider": "Adicionar provedor",
       "defaultInstall": "Instalação padrão do seu PATH",
       "sharedInstall": "Compartilha a instalação e o login padrão",
@@ -708,7 +711,8 @@
         "duplicateId": "Já existe um provedor com o id {{id}}.",
         "invalidVariable": "{{name}} não é um nome válido de variável de ambiente.",
         "add": "Adicionar",
-        "nameHint": "Aparece no seletor de modelo."
+        "nameHint": "Aparece no seletor de modelo.",
+        "homePathHintHermes": "Diretório de configuração e credenciais do Hermes (HERMES_HOME). Execute setup para cada conta."
       },
       "ownLogin": "Login próprio em {{path}}",
       "signIn": "Entrar",

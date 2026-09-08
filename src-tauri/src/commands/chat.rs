@@ -557,23 +557,15 @@ async fn prepare_send_message_turn(
     } else {
         configured_reasoning_effort.clone()
     };
-    let sandbox_mode_override = thread_sandbox_mode(thread.engine_metadata.as_ref())?;
-    let supports_panes_sandbox = engine_kind(&thread.engine_id) != "opencode";
-    let sandbox_mode = if supports_panes_sandbox {
-        Some(
-            sandbox_mode_override
-                .clone()
-                .unwrap_or_else(|| "workspace-write".to_string()),
-        )
-    } else {
-        if sandbox_mode_override.is_some() {
-            log::warn!(
-                "ignoring sandbox mode override on OpenCode thread {}",
-                thread.id
-            );
-        }
-        None
-    };
+    let supports_panes_sandbox = !matches!(engine_kind(&thread.engine_id), "opencode" | "hermes");
+    let sandbox_mode_override =
+        thread_sandbox_mode_for_engine(&thread.engine_id, thread.engine_metadata.as_ref())?;
+    let sandbox_mode = supports_panes_sandbox.then(|| {
+        sandbox_mode_override
+            .clone()
+            .unwrap_or_else(|| "workspace-write".to_string())
+    });
+    validate_engine_sandbox_mode(thread.engine_id.as_str(), sandbox_mode.as_deref())?;
     let workspace_writable_roots = if selected_repo.is_some() {
         None
     } else {
@@ -712,12 +704,10 @@ async fn prepare_send_message_turn(
     let sandbox = SandboxPolicy {
         writable_roots,
         allow_network,
-        approval_policy: Some(approval_policy_override.unwrap_or_else(|| {
-            Value::String(
-                approval_policy_for_engine_and_trust_level(thread.engine_id.as_str(), &trust_level)
-                    .to_string(),
-            )
-        })),
+        approval_policy: approval_policy_override.or_else(|| {
+            approval_policy_for_engine_and_trust_level(thread.engine_id.as_str(), &trust_level)
+                .map(|policy| Value::String(policy.to_string()))
+        }),
         permission_profile,
         approvals_reviewer: if engine_kind(&thread.engine_id) == "codex" {
             thread_approvals_reviewer(thread.engine_metadata.as_ref())
@@ -4506,8 +4496,9 @@ fn aggregate_workspace_trust_level(repos: &[RepoDto]) -> TrustLevelDto {
 fn approval_policy_for_engine_and_trust_level(
     engine_id: &str,
     trust_level: &TrustLevelDto,
-) -> &'static str {
-    match engine_kind(engine_id) {
+) -> Option<&'static str> {
+    Some(match engine_kind(engine_id) {
+        "hermes" => return None,
         "claude" => match trust_level {
             TrustLevelDto::Trusted => "trusted",
             TrustLevelDto::Standard => "standard",
@@ -4522,7 +4513,7 @@ fn approval_policy_for_engine_and_trust_level(
             TrustLevelDto::Standard => "on-request",
             TrustLevelDto::Restricted => "untrusted",
         },
-    }
+    })
 }
 
 fn allow_network_for_trust_level(trust_level: &TrustLevelDto) -> bool {
@@ -4534,6 +4525,7 @@ fn thread_approval_policy_override_value(
     metadata: Option<&Value>,
 ) -> Result<Option<Value>, String> {
     match engine_kind(engine_id) {
+        "hermes" => Ok(None),
         "claude" => Ok(metadata
             .and_then(|value| value.get("claudePermissionMode"))
             .and_then(Value::as_str)
@@ -4557,6 +4549,16 @@ fn thread_allow_network_override(metadata: Option<&Value>) -> Option<bool> {
     metadata
         .and_then(|value| value.get("sandboxAllowNetwork"))
         .and_then(Value::as_bool)
+}
+
+fn thread_sandbox_mode_for_engine(
+    engine_id: &str,
+    metadata: Option<&Value>,
+) -> Result<Option<String>, String> {
+    match engine_kind(engine_id) {
+        "hermes" | "opencode" => Ok(None),
+        _ => thread_sandbox_mode(metadata),
+    }
 }
 
 fn thread_sandbox_mode(metadata: Option<&Value>) -> Result<Option<String>, String> {
@@ -5474,31 +5476,83 @@ mod tests {
     fn claude_defaults_follow_trust_level_directly() {
         assert_eq!(
             approval_policy_for_engine_and_trust_level("claude", &TrustLevelDto::Trusted),
-            "trusted"
+            Some("trusted")
         );
         assert_eq!(
             approval_policy_for_engine_and_trust_level("claude", &TrustLevelDto::Standard),
-            "standard"
+            Some("standard")
         );
         assert_eq!(
             approval_policy_for_engine_and_trust_level("claude", &TrustLevelDto::Restricted),
-            "restricted"
+            Some("restricted")
         );
+    }
+
+    #[test]
+    fn hermes_ignores_sandbox_overrides_including_invalid_legacy_values() {
+        for id in ["hermes", "hermes_work"] {
+            assert_eq!(thread_sandbox_mode_for_engine(id, None).unwrap(), None);
+            for mode in [
+                "workspace-write",
+                "danger-full-access",
+                "unsupported-old-mode",
+            ] {
+                assert_eq!(
+                    thread_sandbox_mode_for_engine(
+                        id,
+                        Some(&serde_json::json!({"sandboxMode": mode}))
+                    )
+                    .unwrap(),
+                    None
+                );
+            }
+        }
+        assert!(thread_sandbox_mode_for_engine(
+            "codex",
+            Some(&serde_json::json!({"sandboxMode": "unsupported-old-mode"}))
+        )
+        .is_err());
+        assert_eq!(
+            thread_sandbox_mode_for_engine(
+                "claude",
+                Some(&serde_json::json!({"sandboxMode": "read-only"}))
+            )
+            .unwrap(),
+            Some("read-only".to_string())
+        );
+    }
+
+    #[test]
+    fn hermes_has_no_approval_policy_or_inherited_override() {
+        let metadata = serde_json::json!({"sandboxApprovalPolicy": {"invalid": true}, "claudePermissionMode": "trusted", "opencodePermissionMode": "allow"});
+        for id in ["hermes", "hermes_work"] {
+            for trust in [
+                TrustLevelDto::Trusted,
+                TrustLevelDto::Standard,
+                TrustLevelDto::Restricted,
+            ] {
+                assert_eq!(approval_policy_for_engine_and_trust_level(id, &trust), None);
+            }
+            assert_eq!(
+                thread_approval_policy_override_value(id, Some(&metadata)).unwrap(),
+                None
+            );
+        }
     }
 
     #[test]
     fn opencode_defaults_use_permission_modes_not_codex_sandbox_policies() {
         assert_eq!(
             approval_policy_for_engine_and_trust_level("opencode", &TrustLevelDto::Trusted),
-            "ask"
+            Some("ask")
         );
         assert_eq!(
             approval_policy_for_engine_and_trust_level("opencode", &TrustLevelDto::Standard),
-            "ask"
+            Some("ask")
         );
         assert_eq!(
             approval_policy_for_engine_and_trust_level("opencode", &TrustLevelDto::Restricted),
-            "deny"
+            Some("deny")
         );
     }
 

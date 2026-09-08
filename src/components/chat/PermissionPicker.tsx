@@ -20,6 +20,7 @@ import {
   visibleAutonomyPresets,
 } from "../../lib/autonomyPresets";
 import type { AutonomyPresetId } from "../../lib/autonomyPresets";
+import { engineKind } from "../../lib/engineKind";
 import type { ChatEngineId, TrustLevel } from "../../types";
 
 type PermissionOption<T extends string = string> = {
@@ -126,7 +127,7 @@ export function PermissionPicker({
   const [open, setOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("");
   const presetsAvailable =
-    engineId !== undefined && presetValue !== undefined && onPresetChange !== undefined;
+    engineId !== undefined && engineKind(engineId) !== "hermes" && presetValue !== undefined && onPresetChange !== undefined;
   const [view, setView] = useState<"presets" | "advanced">(
     presetsAvailable ? "presets" : "advanced",
   );

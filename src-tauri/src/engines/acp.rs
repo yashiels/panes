@@ -55,6 +55,7 @@ impl SessionSlot {
     }
 }
 
+#[derive(Clone)]
 pub struct AcpLaunchConfig {
     pub id: String,
     pub name: String,
@@ -65,9 +66,17 @@ pub struct AcpLaunchConfig {
     pub turn_timeout: Duration,
 }
 
+struct ConfigurationGeneration {
+    revision: u64,
+    shutdown: CancellationToken,
+}
+
 pub struct AcpEngine {
     launch: AcpLaunchConfig,
     instance: Uuid,
+    configuration: Mutex<ConfigurationGeneration>,
+    hermes_settings: Option<Mutex<super::EngineInstanceSettings>>,
+    runtime_models: Mutex<Vec<ModelInfo>>,
     sessions: Mutex<HashMap<String, Arc<SessionSlot>>>,
 }
 
@@ -76,8 +85,183 @@ impl AcpEngine {
         Self {
             launch,
             instance: Uuid::new_v4(),
+            configuration: Mutex::new(ConfigurationGeneration {
+                revision: 0,
+                shutdown: CancellationToken::new(),
+            }),
+            hermes_settings: None,
+            runtime_models: Mutex::new(Vec::new()),
             sessions: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn hermes(id: &str, name: &str, settings: super::EngineInstanceSettings) -> Self {
+        let mut engine = Self::new(AcpLaunchConfig {
+            id: id.into(),
+            name: name.into(),
+            executable: PathBuf::new(),
+            args: vec![],
+            env: BTreeMap::new(),
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            turn_timeout: DEFAULT_TURN_TIMEOUT,
+        });
+        engine.hermes_settings = Some(Mutex::new(settings));
+        engine
+    }
+
+    pub fn kind(&self) -> &'static str {
+        if self.hermes_settings.is_some() {
+            "hermes"
+        } else {
+            "acp"
+        }
+    }
+
+    fn launch_snapshot(&self) -> Result<AcpLaunchConfig> {
+        match &self.hermes_settings {
+            Some(settings) => {
+                super::hermes::launch(self.id(), self.name(), &settings.lock().unwrap())
+            }
+            None => Ok(self.launch.clone()),
+        }
+    }
+
+    pub fn update_instance_settings_sync(&self, settings: super::EngineInstanceSettings) {
+        self.replace_instance_settings(settings);
+    }
+
+    fn replace_instance_settings(
+        &self,
+        settings: super::EngineInstanceSettings,
+    ) -> Vec<Arc<Process>> {
+        let mut configuration = self.configuration.lock().unwrap();
+        let changed = self.hermes_settings.as_ref().is_some_and(|current| {
+            let mut current = current.lock().unwrap();
+            if *current == settings {
+                return false;
+            }
+            *current = settings;
+            true
+        });
+        if !changed {
+            return vec![];
+        }
+        configuration.shutdown.cancel();
+        configuration.revision += 1;
+        configuration.shutdown = CancellationToken::new();
+        self.runtime_models.lock().unwrap().clear();
+        std::mem::take(&mut *self.sessions.lock().unwrap())
+            .into_values()
+            .filter_map(|slot| slot.get().cloned())
+            .collect()
+    }
+
+    pub async fn update_instance_settings(&self, settings: super::EngineInstanceSettings) {
+        for process in self.replace_instance_settings(settings) {
+            process.stop().await;
+        }
+    }
+
+    fn spawn_process(&self, cwd: &PathBuf) -> Result<Arc<Process>> {
+        let configuration = self.configuration.lock().unwrap();
+        Process::spawn(
+            &self.launch_snapshot()?,
+            self.instance,
+            cwd,
+            configuration.revision,
+            configuration.shutdown.clone(),
+        )
+    }
+
+    async fn probe(&self) -> Result<acp::InitializeResponse> {
+        let cwd = std::env::temp_dir();
+        let process = self.spawn_process(&cwd)?;
+        let result = initialize(&process).await;
+        process.stop().await;
+        result
+    }
+
+    pub async fn prewarm(&self) -> Result<()> {
+        self.probe().await.map(|_| ())
+    }
+
+    pub async fn health_report(&self) -> crate::models::EngineHealthDto {
+        let result = self.probe().await;
+        let (available, version, details) = match result {
+            Ok(init) => (true, init.agent_info.map(|info| info.version),
+                format!("{} ACP protocol 1 is ready. Model credentials are checked on the first turn.", self.name())),
+            Err(error) => (false, None, format!("{} ACP could not start: {error:#}. Check the provider binary path and its Python virtual environment; run hermes setup for model credentials.", self.name())),
+        };
+        crate::models::EngineHealthDto {
+            id: self.id().into(),
+            available,
+            version,
+            details: Some(details),
+            warnings: vec![],
+            checks: vec!["ACP initialize (protocol 1)".into()],
+            fixes: if available {
+                vec![]
+            } else {
+                vec!["hermes setup".into()]
+            },
+            protocol_diagnostics: None,
+        }
+    }
+
+    fn capture_models(&self, response: &Value, process: &Process) -> Result<()> {
+        let configuration = self.configuration.lock().unwrap();
+        ensure!(
+            configuration.revision == process.configuration_revision,
+            "ACP configuration changed while starting session"
+        );
+        if self.hermes_settings.is_some() {
+            if let Some(models) = super::hermes::session_models(response)? {
+                let mut catalog = super::hermes::fallback_models();
+                catalog.extend(
+                    models
+                        .available_models
+                        .iter()
+                        .filter(|model| model.model_id != super::hermes::DEFAULT_MODEL)
+                        .map(|model| {
+                            super::hermes::model_info(
+                                &model.model_id,
+                                &model.name,
+                                model.description.as_deref().unwrap_or("Hermes model"),
+                                false,
+                            )
+                        }),
+                );
+                *self.runtime_models.lock().unwrap() = catalog;
+                *process.model.lock().unwrap() = Some(models.current_model_id.clone());
+                *process.default_model.lock().unwrap() = Some(models.current_model_id);
+            }
+        }
+        Ok(())
+    }
+
+    async fn select_model(&self, process: &Process, session: &str, model: &str) -> Result<()> {
+        if self.hermes_settings.is_none() {
+            return Ok(());
+        }
+        let selected = if model.is_empty() || model == super::hermes::DEFAULT_MODEL {
+            process.default_model.lock().unwrap().clone()
+        } else {
+            Some(model.to_string())
+        };
+        let Some(selected) = selected else {
+            return Ok(());
+        };
+        if process.model.lock().unwrap().as_ref() == Some(&selected) {
+            return Ok(());
+        }
+        let _: Value = process
+            .rpc(
+                "session/set_model",
+                json!({"sessionId": session, "modelId": selected}),
+            )
+            .await?;
+        *process.model.lock().unwrap() = Some(selected);
+        Ok(())
     }
 
     fn process(&self, session: &str) -> Result<Arc<Process>> {
@@ -92,37 +276,31 @@ impl AcpEngine {
     }
 
     async fn open(&self, cwd: PathBuf, resume: Option<&str>) -> Result<(String, Arc<Process>)> {
-        let process = Process::spawn(&self.launch, self.instance, &cwd)?;
+        let process = self.spawn_process(&cwd)?;
         let result = async {
-            let initialized: acp::InitializeResponse = process
-                .rpc(
-                    "initialize",
-                    acp::InitializeRequest::new(ProtocolVersion::V1)
-                        .client_info(acp::Implementation::new("panes", env!("CARGO_PKG_VERSION"))),
-                )
-                .await?;
-            ensure!(
-                initialized.protocol_version == ProtocolVersion::V1,
-                "incompatible ACP protocol version {}; expected 1",
-                initialized.protocol_version
-            );
+            let initialized = initialize(&process).await?;
             let session = if let Some(session) = resume {
                 ensure!(
                     initialized.agent_capabilities.load_session,
                     "ACP server does not support session/load"
                 );
-                let _: acp::LoadSessionResponse = process
+                let loaded: Value = process
                     .rpc(
                         "session/load",
                         acp::LoadSessionRequest::new(session.to_string(), cwd),
                     )
                     .await?;
+                let _: acp::LoadSessionResponse = serde_json::from_value(loaded.clone())?;
+                self.capture_models(&loaded, &process)?;
                 session.to_string()
             } else {
-                let created: acp::NewSessionResponse = process
+                let created: Value = process
                     .rpc("session/new", acp::NewSessionRequest::new(cwd))
                     .await?;
-                created.session_id.to_string()
+                self.capture_models(&created, &process)?;
+                serde_json::from_value::<acp::NewSessionResponse>(created)?
+                    .session_id
+                    .to_string()
             };
             ensure!(!session.is_empty(), "ACP returned an empty session id");
             Ok(session)
@@ -147,10 +325,16 @@ impl Engine for AcpEngine {
         &self.launch.name
     }
     fn models(&self) -> Vec<ModelInfo> {
-        Vec::new()
+        let models = self.runtime_models.lock().unwrap();
+        if models.is_empty() && self.hermes_settings.is_some() {
+            super::hermes::fallback_models()
+        } else {
+            models.clone()
+        }
     }
     async fn is_available(&self) -> bool {
-        self.launch.executable.is_file()
+        self.launch_snapshot()
+            .is_ok_and(|launch| crate::runtime_env::is_executable_file(&launch.executable))
     }
 
     async fn start_thread(
@@ -161,7 +345,7 @@ impl Engine for AcpEngine {
         sandbox: SandboxPolicy,
     ) -> Result<EngineThread> {
         ensure!(
-            model.is_empty(),
+            model.is_empty() || self.hermes_settings.is_some(),
             "ACP model selection requires a launch profile"
         );
         ensure!(
@@ -189,7 +373,8 @@ impl Engine for AcpEngine {
                 }
                 slot.clone()
             };
-            slot.process
+            let process = slot
+                .process
                 .get_or_try_init(|| async {
                     if let Some(previous) = &slot.predecessor {
                         previous.stop().await;
@@ -199,21 +384,50 @@ impl Engine for AcpEngine {
                         .map(|(_, process)| process)
                 })
                 .await?;
+            self.select_model(process, session, model).await?;
+            let current = {
+                let configuration = self.configuration.lock().unwrap();
+                configuration.revision == process.configuration_revision
+                    && self
+                        .sessions
+                        .lock()
+                        .unwrap()
+                        .get(session)
+                        .is_some_and(|current| Arc::ptr_eq(current, &slot))
+            };
+            if !current {
+                process.stop().await;
+                bail!("ACP configuration changed while starting session");
+            }
             return Ok(EngineThread {
                 engine_thread_id: session.to_string(),
             });
         }
         let (session, process) = self.open(cwd, None).await?;
+        if let Err(error) = self.select_model(&process, &session, model).await {
+            process.stop().await;
+            return Err(error);
+        }
         let slot = Arc::new(SessionSlot::new(None));
         slot.process
-            .set(process)
+            .set(process.clone())
             .map_err(|_| anyhow!("ACP session already initialized"))?;
-        let mut sessions = self.sessions.lock().unwrap();
-        ensure!(
-            !sessions.contains_key(&session),
-            "ACP server reused an existing session id"
-        );
-        sessions.insert(session.clone(), slot);
+        let published = {
+            let configuration = self.configuration.lock().unwrap();
+            let mut sessions = self.sessions.lock().unwrap();
+            if configuration.revision != process.configuration_revision
+                || sessions.contains_key(&session)
+            {
+                false
+            } else {
+                sessions.insert(session.clone(), slot);
+                true
+            }
+        };
+        if !published {
+            process.stop().await;
+            bail!("ACP configuration changed or server reused an existing session id");
+        }
         Ok(EngineThread {
             engine_thread_id: session,
         })
@@ -327,13 +541,32 @@ impl Engine for AcpEngine {
     }
 }
 
+async fn initialize(process: &Process) -> Result<acp::InitializeResponse> {
+    let initialized: acp::InitializeResponse = process
+        .rpc(
+            "initialize",
+            acp::InitializeRequest::new(ProtocolVersion::V1)
+                .client_info(acp::Implementation::new("panes", env!("CARGO_PKG_VERSION"))),
+        )
+        .await?;
+    ensure!(
+        initialized.protocol_version == ProtocolVersion::V1,
+        "incompatible ACP protocol version {}; expected 1",
+        initialized.protocol_version
+    );
+    Ok(initialized)
+}
+
 struct Process {
+    configuration_revision: u64,
     commands: mpsc::Sender<ClientCommand>,
     shutdown: CancellationToken,
     reaped: CancellationToken,
     alive: Arc<AtomicBool>,
     approval_prefix: String,
     request_timeout: Duration,
+    model: Mutex<Option<String>>,
+    default_model: Mutex<Option<String>>,
 }
 
 impl Drop for Process {
@@ -343,7 +576,13 @@ impl Drop for Process {
 }
 
 impl Process {
-    fn spawn(launch: &AcpLaunchConfig, instance: Uuid, cwd: &PathBuf) -> Result<Arc<Self>> {
+    fn spawn(
+        launch: &AcpLaunchConfig,
+        instance: Uuid,
+        cwd: &PathBuf,
+        configuration_revision: u64,
+        configuration_shutdown: CancellationToken,
+    ) -> Result<Arc<Self>> {
         let mut command = Command::new(&launch.executable);
         command
             .args(&launch.args)
@@ -367,12 +606,15 @@ impl Process {
         let alive = Arc::new(AtomicBool::new(true));
         let approval_prefix = format!("acp:{instance}:{}:", Uuid::new_v4());
         let process = Arc::new(Self {
+            configuration_revision,
             commands,
             shutdown: shutdown.clone(),
             reaped: reaped.clone(),
             alive: alive.clone(),
             approval_prefix: approval_prefix.clone(),
             request_timeout: launch.request_timeout,
+            model: Mutex::new(None),
+            default_model: Mutex::new(None),
         });
         let turn_timeout = launch.turn_timeout;
         tokio::spawn(async move {
@@ -413,6 +655,7 @@ impl Process {
                     tokio::select! {
                         biased;
                         _ = shutdown.cancelled() => bail!("ACP process stopped"),
+                        _ = configuration_shutdown.cancelled() => bail!("ACP configuration changed"),
                         _ = cancellation.cancelled(), if dispatcher.active.is_some() => {
                             alive.store(false, Ordering::Release);
                             dispatcher.cancel().await?;
@@ -573,6 +816,7 @@ struct ToolState {
     snapshot: String,
     completed: bool,
     diverged: bool,
+    diff: Option<String>,
 }
 
 impl Dispatcher {
@@ -599,15 +843,23 @@ impl Dispatcher {
                 method,
                 params,
                 reply,
-            } => match self.request(&method, params) {
-                Ok(id) => {
-                    self.pending.insert(id, reply);
+            } => {
+                if method == "session/set_model" && self.active.is_some() {
+                    let _ = reply.send(Err(anyhow!(
+                        "cannot change ACP model during an active turn"
+                    )));
+                    return Ok(());
                 }
-                Err(error) => {
-                    let _ = reply.send(Err(anyhow!(error.to_string())));
-                    return Err(error);
+                match self.request(&method, params) {
+                    Ok(id) => {
+                        self.pending.insert(id, reply);
+                    }
+                    Err(error) => {
+                        let _ = reply.send(Err(anyhow!(error.to_string())));
+                        return Err(error);
+                    }
                 }
-            },
+            }
             ClientCommand::Begin {
                 session,
                 input,
@@ -618,7 +870,10 @@ impl Dispatcher {
                 let validation = if self.active.is_some() {
                     Some("ACP session already has an active turn")
                 } else if !input.attachments.is_empty()
-                    || !input.input_items.is_empty()
+                    || input
+                        .input_items
+                        .iter()
+                        .any(|item| !matches!(item, super::TurnInputItem::Text { .. }))
                     || input.plan_mode
                 {
                     Some("ACP substrate supports plain text input only")
@@ -636,12 +891,23 @@ impl Dispatcher {
                     let _ = done.send(Ok(()));
                     return Ok(());
                 }
-                let prompt = acp::PromptRequest::new(
-                    session.clone(),
+                let content = if input.input_items.is_empty() {
                     vec![acp::ContentBlock::Text(acp::TextContent::new(
                         input.message,
-                    ))],
-                );
+                    ))]
+                } else {
+                    input
+                        .input_items
+                        .into_iter()
+                        .filter_map(|item| match item {
+                            super::TurnInputItem::Text { text } => {
+                                Some(acp::ContentBlock::Text(acp::TextContent::new(text)))
+                            }
+                            _ => None,
+                        })
+                        .collect()
+                };
+                let prompt = acp::PromptRequest::new(session.clone(), content);
                 self.active = Some(Turn {
                     generation: Uuid::new_v4(),
                     session,
@@ -862,7 +1128,12 @@ impl Dispatcher {
             turn.generation,
             Uuid::new_v4()
         );
-        let details = json!({"sessionId":turn.session,"processGeneration":self.approval_prefix,"turnGeneration":turn.generation,"requestId":id,"options":request.options,"toolCall":request.tool_call});
+        let mut details = json!({"sessionId":turn.session,"processGeneration":self.approval_prefix,"turnGeneration":turn.generation,"requestId":id,"options":request.options,"toolCall":request.tool_call});
+        if let Some(content) = &request.tool_call.fields.content {
+            if let Some(diff) = content_diff(content)? {
+                details["diff"] = Value::String(diff);
+            }
+        }
         let summary = request
             .tool_call
             .fields
@@ -995,6 +1266,7 @@ impl Turn {
                     snapshot: String::new(),
                     completed: false,
                     diverged: false,
+                    diff: None,
                 },
             );
         }
@@ -1003,6 +1275,20 @@ impl Turn {
             return Ok(());
         }
         if let Some(content) = content {
+            let diff = content_diff(&content)?;
+            if diff != tool.diff {
+                if let Some(diff) = &diff {
+                    emit(
+                        &self.events,
+                        EngineEvent::DiffUpdated {
+                            diff: diff.clone(),
+                            scope: super::DiffScope::File,
+                        },
+                    )
+                    .await?;
+                }
+                tool.diff = diff;
+            }
             let mut snapshot = String::new();
             for block in content {
                 if let acp::ToolCallContent::Content(content) = block {
@@ -1046,7 +1332,7 @@ impl Turn {
                         success,
                         output: Some(trim_action_output_delta_content(&tool.snapshot)),
                         error: (!success).then(|| "ACP tool failed".into()),
-                        diff: None,
+                        diff: tool.diff.clone(),
                         duration_ms: 0,
                     },
                 },
@@ -1055,6 +1341,33 @@ impl Turn {
         }
         Ok(())
     }
+}
+
+fn content_diff(content: &[acp::ToolCallContent]) -> Result<Option<String>> {
+    let mut patches = String::new();
+    for block in content {
+        if let acp::ToolCallContent::Diff(diff) = block {
+            let old = diff.old_text.as_deref().unwrap_or("");
+            ensure!(
+                old.len() + diff.new_text.len() <= MAX_TOOL_SNAPSHOT,
+                "ACP diff exceeds limit"
+            );
+            let mut patch = git2::Patch::from_buffers(
+                old.as_bytes(),
+                Some(&diff.path),
+                diff.new_text.as_bytes(),
+                Some(&diff.path),
+                None,
+            )?;
+            let buffer = patch.to_buf()?;
+            ensure!(
+                patches.len() + buffer.len() <= super::STREAMED_DIFF_MAX_CHARS,
+                "ACP diff output exceeds limit"
+            );
+            patches.push_str(&String::from_utf8_lossy(&buffer));
+        }
+    }
+    Ok((!patches.is_empty()).then_some(patches))
 }
 
 fn action_type(kind: acp::ToolKind) -> ActionType {

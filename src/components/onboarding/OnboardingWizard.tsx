@@ -71,6 +71,7 @@ const CHAT_ENGINE_OPTIONS: Array<{
 }> = [
   { id: "codex", descriptionKey: "chatEngines.options.codex.description" },
   { id: "claude", descriptionKey: "chatEngines.options.claude.description" },
+  { id: "hermes", descriptionKey: "chatEngines.options.hermes.description" },
   { id: "opencode", descriptionKey: "chatEngines.options.opencode.description" },
 ];
 
@@ -80,6 +81,8 @@ function chatEngineLabel(engineId: OnboardingChatEngineId): string {
       return "Codex";
     case "claude":
       return "Claude";
+    case "hermes":
+      return "Hermes";
     case "opencode":
       return "OpenCode";
   }
@@ -1355,6 +1358,16 @@ export function OnboardingWizard() {
                           ? () => void handleInstallOpenCode()
                           : undefined
                       }
+                    />
+                  ) : null}
+
+                  {selectedChatEngines.includes("hermes") && !readiness.engineHealth.hermes?.available ? (
+                    <ReadinessDependencyCard
+                      label="Hermes Agent"
+                      disabled={false}
+                      description={t("setup:chatReadiness.hermesSetup")}
+                      command={getHarnessInstallCommand("hermes") ?? "hermes setup"}
+                      installing={false}
                     />
                   ) : null}
 

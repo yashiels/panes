@@ -1,3 +1,5 @@
+import { AcpApprovalDiff } from "./AcpApprovalDiff";
+import { acpPermissionOptions } from "./acpPermissions";
 import { engineKind } from "../../lib/engineKind";
 import { WorkingIndicator } from "../shared/WorkingIndicator";
 import { ApprovalDeck } from "./ApprovalDeck";
@@ -220,7 +222,10 @@ export function canUseApprovalDecisionActions(
   engineId?: string,
   details?: Record<string, unknown>,
 ): boolean {
-  return engineKind(engineId) !== "opencode" || !isOpenCodeQuestionApproval(details);
+  return (
+    engineKind(engineId) !== "hermes" &&
+    (engineKind(engineId) !== "opencode" || !isOpenCodeQuestionApproval(details))
+  );
 }
 
 export function canBatchApproveApproval(
@@ -3788,7 +3793,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
 
   const isCodexEngine = engineKind(selectedEngineId) === "codex";
   const isOpenCodeEngine = engineKind(selectedEngineId) === "opencode";
-  const activePlanMode = planMode && !isOpenCodeEngine;
+  const supportsPlanMode = isCodexEngine || engineKind(selectedEngineId) === "claude";
+  const activePlanMode = planMode && supportsPlanMode;
 
   const slashCommands: SlashCommand[] = useMemo(
     () => [
@@ -4054,7 +4060,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       text,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
       inputItems: inputItems && inputItems.length > 0 ? inputItems : undefined,
-      planMode: engineKind(engineId) === "opencode" ? false : planMode,
+      planMode: ["opencode", "hermes"].includes(engineKind(engineId)) ? false : planMode,
       engineId,
       modelId: runtime && runtime.engineId === engineId ? runtime.modelId : activeThread.modelId,
       reasoningEffort:
@@ -4136,7 +4142,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     const submitEngineId = composerRuntime.engineId;
     const submitModelId = composerRuntime.modelId;
     const submitReasoningEffort = composerRuntime.reasoningEffort;
-    const submitPlanMode = engineKind(submitEngineId) === "opencode" ? false : planMode;
+    const submitPlanMode = ["opencode", "hermes"].includes(engineKind(submitEngineId)) ? false : planMode;
 
     const activeScopeRepoId = activeRepo?.id ?? null;
     const activeThreadInScope = activeThread
@@ -4378,7 +4384,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       }
       setThreadLastModelLocal(prompt.threadId, prompt.modelId);
 
-      const promptPlanMode = engineKind(prompt.engineId) === "opencode" ? false : prompt.planMode;
+      const promptPlanMode = ["opencode", "hermes"].includes(engineKind(prompt.engineId)) ? false : prompt.planMode;
       const sent = await send(prompt.text, {
         threadIdOverride: prompt.threadId,
         engineId: prompt.engineId,
@@ -5645,6 +5651,8 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           {activeApproval && (() => {
             const approval = activeApproval;
             const details = approval.details ?? {};
+            const isAcpApproval = engineKind(activeThread?.engineId) === "hermes";
+            const acpOptions = isAcpApproval ? acpPermissionOptions(details) : [];
             const isPermissionsRequest = isPermissionsRequestApproval(details);
             const isToolInputRequest = isRequestUserInputApproval(details);
             const requiresCustomPayload = requiresCustomApprovalPayload(details);
@@ -5679,6 +5687,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
             const hidePositiveApprovalActions =
               isToolInputRequest && activeApprovalQuestions.length === 0;
             const showPositiveActions =
+              !isAcpApproval &&
               !hasUnsupportedClaudePayload &&
               !requiresCustomPayload &&
               !hidePositiveApprovalActions;
@@ -5770,13 +5779,33 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                 icon={useQuestionnaire ? <MessageSquare size={12} /> : approvalRowIcon(approval.actionType)}
                 tone={useQuestionnaire ? "info" : "amber"}
                 title={approval.summary || (useQuestionnaire ? t("panel.approvalDeck.question") : t("panel.approvalDeck.request"))}
-                headerActions={headerActions}
+                headerActions={isAcpApproval ? undefined : headerActions}
                 onPrimary={useQuestionnaire ? undefined : allow}
                 onSecondary={useQuestionnaire ? undefined : allowSession}
                 onDeny={useQuestionnaire ? undefined : deny}
                 onEscape={() => inputRef.current?.focus()}
                 footer={
-                  useQuestionnaire ? undefined : (
+                  isAcpApproval ? (
+                    <>
+                      {acpOptions.map((option) => (
+                        <button
+                          key={option.optionId}
+                          type="button"
+                          className={`approval-btn ${option.kind.startsWith("allow") ? "approval-btn-allow" : "approval-btn-deny"}`}
+                          onClick={() => void respondApproval(approval.approvalId, { optionId: option.optionId })}
+                        >
+                          {option.name}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="approval-btn approval-btn-cancel"
+                        onClick={() => void respondApproval(approval.approvalId, { decision: "cancel" })}
+                      >
+                        {t("panel.approvalActions.cancel")}
+                      </button>
+                    </>
+                  ) : useQuestionnaire ? undefined : (
                     <>
                       {hasUnsupportedClaudePayload ? (
                         <span className="approval-row-hint">
@@ -5890,6 +5919,9 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                   <>
                     {command && <div className="approval-row-command">{command}</div>}
                     {reason && <div className="approval-row-reason">{reason}</div>}
+                    {isAcpApproval && typeof details.diff === "string" && details.diff.length > 0 && (
+                      <AcpApprovalDiff diff={details.diff} />
+                    )}
                   </>
                 )}
               </ApprovalDeck>
@@ -6067,7 +6099,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     }
                     if (e.shiftKey && e.key === "Tab") {
                       e.preventDefault();
-                      if (activeWorkspaceId && !isOpenCodeEngine && planModeVisible) {
+                      if (activeWorkspaceId && supportsPlanMode && planModeVisible) {
                         setPlanMode((prev) => !prev);
                       }
                     }
@@ -6146,7 +6178,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                     onAgentChange={(agent) => void onOpenCodeAgentChange(agent)}
                     disabled={!openCodeCatalogLoaded && openCodeSelectableAgents.length === 0}
                   />
-                ) : planModeVisible ? (
+                ) : planModeVisible && supportsPlanMode ? (
                   <button
                     type="button"
                     className={`chat-toolbar-btn chat-toolbar-btn-bordered ${activePlanMode ? "chat-toolbar-btn-active" : ""}`}
@@ -6184,7 +6216,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       manuallyOverrodeThreadSelectionRef.current = true;
                       setHasExplicitComposerRuntime(true);
                       selectedEngineIdRef.current = engineId;
-                      if (engineKind(engineId) === "opencode") setPlanMode(false);
+                      if (["opencode", "hermes"].includes(engineKind(engineId))) setPlanMode(false);
                       if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
                       const nextEngine =
                         engines.find((engine) => engine.id === engineId) ?? null;

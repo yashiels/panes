@@ -134,6 +134,8 @@ function resolveAgentDisplayName(engineId: ChatEngineId): string {
   switch (engineId) {
     case "claude":
       return "Claude";
+    case "hermes":
+      return "Hermes";
     case "opencode":
       return "OpenCode";
     case "codex":

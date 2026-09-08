@@ -50,6 +50,9 @@ while True:
     method = request.get('method')
     request_id = request.get('id')
     if method == 'initialize':
+        if scenario == 'slow_init':
+            import time
+            time.sleep(10)
         if scenario == 'timeout_init':
             continue
         if scenario == 'malformed_init':
@@ -71,7 +74,14 @@ while True:
             update({'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'history'}})
             result(request_id, {})
         else:
-            result(request_id, {'sessionId': session})
+            response = {'sessionId': session}
+            if scenario == 'hermes':
+                from pathlib import Path
+                frames = [json.loads(line) for line in Path(__file__).with_name('hermes-text.jsonl').read_text().splitlines()]
+                response['models'] = next(frame['result']['models'] for frame in frames if 'models' in frame.get('result', {}))
+            result(request_id, response)
+    elif method == 'session/set_model':
+        result(request_id, {})
     elif method == 'session/prompt':
         prompt_count += 1
         if scenario == 'death':

@@ -37,6 +37,9 @@
       },
       "opencode": {
         "description": "Chat powered by the OpenCode headless server. Requires the opencode CLI on PATH."
+      },
+      "hermes": {
+        "description": "Chat with Hermes Agent. Install Hermes, then run hermes setup to configure your model provider."
       }
     }
   },
@@ -67,7 +70,8 @@
       "fixes": "Suggested next steps",
       "showNotes": "Show warnings",
       "hideNotes": "Hide warnings"
-    }
+    },
+    "hermesSetup": "Install Hermes, then run hermes setup in a terminal to select your model provider. Recheck readiness when finished."
   },
   "workspace": {
     "title": "Confirm your first workspace",

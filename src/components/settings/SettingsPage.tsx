@@ -938,7 +938,7 @@ export function SettingsPage() {
                             {t("app:settingsPage.chat.signIn")}
                           </button>
                         ) : null}
-                        {provider.kind !== "opencode" ? (
+                        {["codex", "claude", "hermes"].includes(provider.kind) ? (
                         <button
                           type="button"
                           className="usp-icon-button"

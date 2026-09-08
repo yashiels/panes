@@ -44,7 +44,7 @@ pub struct AppConfig {
     pub chat_providers: Vec<ChatProviderInstanceConfig>,
 }
 
-pub const CHAT_PROVIDER_KINDS: &[&str] = &["codex", "claude"];
+pub const CHAT_PROVIDER_KINDS: &[&str] = &["codex", "claude", "hermes"];
 const CHAT_PROVIDER_SLUG_MAX_CHARS: usize = 48;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -760,6 +760,19 @@ max_action_output_chars = 20000
 
         config.general.sidebar_list_mode = Some("kanban".to_string());
         assert_eq!(config.sidebar_list_mode(), "projects");
+    }
+
+    #[test]
+    fn hermes_provider_entries_accept_builtin_and_custom_instances() {
+        for id in ["hermes", "hermes_work"] {
+            let entry = ChatProviderInstanceConfig {
+                id: id.to_string(),
+                kind: "hermes".to_string(),
+                display_name: "Hermes".to_string(),
+                ..Default::default()
+            };
+            assert!(entry.validate().is_ok());
+        }
     }
 
     #[test]

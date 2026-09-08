@@ -37,6 +37,9 @@
       },
       "opencode": {
         "description": "Chat via servidor headless do OpenCode. Exige a CLI opencode no PATH."
+      },
+      "hermes": {
+        "description": "Converse com o Hermes Agent. Instale o Hermes e execute hermes setup para configurar o provedor de modelos."
       }
     }
   },
@@ -67,7 +70,8 @@
       "fixes": "Próximos passos sugeridos",
       "showNotes": "Mostrar avisos",
       "hideNotes": "Ocultar avisos"
-    }
+    },
+    "hermesSetup": "Instale o Hermes e execute hermes setup em um terminal para selecionar o provedor de modelos. Verifique o status novamente ao terminar."
   },
   "workspace": {
     "title": "Confirme seu primeiro workspace",
