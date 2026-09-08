@@ -72,6 +72,9 @@ jobs:
       - name: Rust check
         working-directory: src-tauri
         run: cargo check
+      - name: ACP substrate tests
+        working-directory: src-tauri
+        run: cargo test engines::acp --lib
 
   macos_compat:
     runs-on: macos-15
