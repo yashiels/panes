@@ -21,6 +21,8 @@ use crate::{
     },
 };
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub mod acp;
 pub mod api_direct;
 pub mod claude_sidecar;
 pub mod codex;
