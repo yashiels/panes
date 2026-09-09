@@ -112,7 +112,7 @@ export function ChatProviderDialog({
       : slug
         ? defaultChatProviderHomePath(kind, slug)
         : "";
-  const binaryPlaceholder = kind;
+  const binaryPlaceholder = kind === "agy" ? "agy-acp" : kind;
   const homePlaceholder = `~/.${kind}`;
   const title = editing
     ? t("settingsPage.chat.dialog.editTitle", { name: provider?.displayName ?? "" })
@@ -152,7 +152,7 @@ export function ChatProviderDialog({
       kind,
       displayName: displayName.trim(),
       binaryPath: binaryPath.trim() || null,
-      homePath: effectiveHomePath.trim() || null,
+      homePath: kind === "agy" ? null : effectiveHomePath.trim() || null,
       launchArgs: launchArgs.trim() || null,
       env,
       enabled,
@@ -214,7 +214,7 @@ export function ChatProviderDialog({
                     onClick={() => setKind(option)}
                   >
                     {providerKindIcon(option, 13)}
-                    {option === "codex" ? "Codex" : option === "hermes" ? "Hermes" : "Claude"}
+                    {option === "codex" ? "Codex" : option === "hermes" ? "Hermes" : option === "agy" ? "Antigravity" : "Claude"}
                   </button>
                 ))}
               </div>
@@ -258,7 +258,7 @@ export function ChatProviderDialog({
             </label>
           ) : null}
 
-          <label className="settings-field">
+          {kind !== "agy" ? <label className="settings-field">
             <span className="settings-field-label">{t("settingsPage.chat.dialog.homePath")}</span>
             <input
               className="settings-input"
@@ -277,7 +277,7 @@ export function ChatProviderDialog({
                   ? t("settingsPage.chat.dialog.homePathHintHermes")
                   : t("settingsPage.chat.dialog.homePathHintClaude")}
             </span>
-          </label>
+          </label> : null}
 
           <label className="settings-field">
             <span className="settings-field-label">{t("settingsPage.chat.dialog.binaryPath")}</span>
@@ -298,7 +298,7 @@ export function ChatProviderDialog({
             <input
               className="settings-input"
               value={launchArgs}
-              placeholder={kind === "codex" ? "--config key=value" : kind === "hermes" ? "" : "--chrome"}
+              placeholder={kind === "codex" ? "--config key=value" : ["hermes", "agy"].includes(kind) ? "" : "--chrome"}
               spellCheck={false}
               onChange={(event) => setLaunchArgs(event.target.value)}
             />

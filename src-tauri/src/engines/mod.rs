@@ -24,6 +24,7 @@ use crate::{
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub mod acp;
+pub mod agy;
 pub mod api_direct;
 pub mod claude_sidecar;
 pub mod codex;
@@ -153,7 +154,7 @@ pub fn capabilities_for_engine(engine_id: &str) -> EngineCapabilities {
         "claude" => CLAUDE_CAPABILITIES,
         "codex" => CODEX_CAPABILITIES,
         "opencode" => OPENCODE_CAPABILITIES,
-        "hermes" => HERMES_CAPABILITIES,
+        "hermes" | "agy" => HERMES_CAPABILITIES,
         _ => EngineCapabilities {
             permission_modes: &[],
             sandbox_modes: &[],
@@ -196,10 +197,10 @@ pub fn normalize_approval_response_for_engine(
     engine_id: &str,
     response: Value,
 ) -> Result<Value, String> {
-    if engine_kind(engine_id) == "hermes" {
+    if matches!(engine_kind(engine_id), "hermes" | "agy") {
         let object = response
             .as_object()
-            .ok_or("Hermes permission response must be an object")?;
+            .ok_or("ACP permission response must be an object")?;
         if object.len() == 1
             && (object
                 .get("optionId")
@@ -210,8 +211,7 @@ pub fn normalize_approval_response_for_engine(
             return Ok(response);
         }
         return Err(
-            "Hermes permission response requires an original optionId or decision cancel"
-                .to_string(),
+            "ACP permission response requires an original optionId or decision cancel".to_string(),
         );
     }
 
@@ -324,7 +324,7 @@ pub fn approval_response_route_for_engine(
     match engine_kind(engine_id) {
         "codex" => codex_event_mapper::extract_persisted_approval_route(details),
         "opencode" => opencode::extract_persisted_approval_route(details),
-        "hermes" => None,
+        "hermes" | "agy" => None,
         _ => None,
     }
 }
@@ -347,6 +347,7 @@ pub fn normalize_claude_approval_decision(value: &str) -> Option<&'static str> {
 
 fn map_engine_capabilities(capabilities: EngineCapabilities) -> EngineCapabilitiesDto {
     EngineCapabilitiesDto {
+        diffs: None,
         permission_modes: capabilities
             .permission_modes
             .iter()
@@ -496,6 +497,7 @@ pub struct EngineManager {
     claude: Arc<ClaudeSidecarEngine>,
     opencode: Arc<OpenCodeEngine>,
     hermes: Arc<AcpEngine>,
+    agy: Arc<AcpEngine>,
     /// Extra provider instances configured by the user, keyed by engine id.
     instances: tokio::sync::RwLock<Vec<EngineHandle>>,
     /// Merged runtime events from every Codex instance.
@@ -590,7 +592,13 @@ impl EngineHandle {
             kind: self.kind().to_string(),
             name: self.engine().name().to_string(),
             models: models.into_iter().map(map_model_info).collect(),
-            capabilities: map_engine_capabilities(capabilities_for_engine(self.id())),
+            capabilities: {
+                let mut capabilities = map_engine_capabilities(capabilities_for_engine(self.id()));
+                if self.kind() == "agy" {
+                    capabilities.diffs = Some(agy::DIFFS);
+                }
+                capabilities
+            },
         }
     }
 
@@ -667,6 +675,11 @@ impl EngineManager {
                 "Hermes",
                 EngineInstanceSettings::default(),
             )),
+            agy: Arc::new(AcpEngine::agy(
+                "agy",
+                "Antigravity",
+                EngineInstanceSettings::default(),
+            )),
             instances: tokio::sync::RwLock::new(Vec::new()),
             codex_runtime_events,
             runtime_bridge_started: std::sync::atomic::AtomicBool::new(false),
@@ -697,6 +710,7 @@ impl EngineManager {
         let settings = EngineInstanceSettings::from_config(entry);
         match entry.kind.as_str() {
             "hermes" => self.hermes.update_instance_settings_sync(settings),
+            "agy" => self.agy.update_instance_settings_sync(settings),
             "codex" => {
                 if let Ok(mut current) = self.codex.instance_settings_slot().lock() {
                     *current = settings;
@@ -719,6 +733,9 @@ impl EngineManager {
         let name = entry.display_name.trim();
         match entry.kind.as_str() {
             "hermes" => Some(EngineHandle::Acp(Arc::new(AcpEngine::hermes(
+                &entry.id, name, settings,
+            )))),
+            "agy" => Some(EngineHandle::Acp(Arc::new(AcpEngine::agy(
                 &entry.id, name, settings,
             )))),
             "codex" => Some(EngineHandle::Codex(Arc::new(CodexEngine::with_instance(
@@ -748,6 +765,7 @@ impl EngineManager {
                 "codex" => self.codex.update_instance_settings(settings).await,
                 "claude" => self.claude.update_instance_settings(settings).await,
                 "hermes" => self.hermes.update_instance_settings(settings).await,
+                "agy" => self.agy.update_instance_settings(settings).await,
                 _ => {}
             }
         }
@@ -769,6 +787,11 @@ impl EngineManager {
 
         if !builtin_kinds_configured.contains(&"hermes") {
             self.hermes
+                .update_instance_settings(EngineInstanceSettings::default())
+                .await;
+        }
+        if !builtin_kinds_configured.contains(&"agy") {
+            self.agy
                 .update_instance_settings(EngineInstanceSettings::default())
                 .await;
         }
@@ -843,6 +866,7 @@ impl EngineManager {
             EngineHandle::Claude(self.claude.clone()),
             EngineHandle::OpenCode(self.opencode.clone()),
             EngineHandle::Acp(self.hermes.clone()),
+            EngineHandle::Acp(self.agy.clone()),
         ];
         handles.extend(self.instances.read().await.iter().cloned());
         handles
@@ -859,6 +883,7 @@ impl EngineManager {
             "claude" => return Some(EngineHandle::Claude(self.claude.clone())),
             "opencode" => return Some(EngineHandle::OpenCode(self.opencode.clone())),
             "hermes" => return Some(EngineHandle::Acp(self.hermes.clone())),
+            "agy" => return Some(EngineHandle::Acp(self.agy.clone())),
             _ => {}
         }
         self.instances
@@ -1566,7 +1591,7 @@ mod tests {
 
     #[test]
     fn hermes_permissions_require_live_option_ids_and_never_persist_routes() {
-        for engine_id in ["hermes", "hermes_work"] {
+        for engine_id in ["hermes", "hermes_work", "agy", "agy_work"] {
             let capabilities = capabilities_for_engine(engine_id);
             assert!(capabilities.permission_modes.is_empty());
             assert!(capabilities.sandbox_modes.is_empty());
@@ -1632,6 +1657,37 @@ mod tests {
         manager.apply_chat_providers(&[]).await;
         assert!(manager.handle("hermes_work").await.is_none());
         assert!(manager.handle("hermes").await.is_some());
+    }
+    #[tokio::test]
+    async fn agy_manager_selects_and_reconciles_product_instances() {
+        let config = AppConfig {
+            chat_providers: vec![provider_entry("agy_work", "agy", true)],
+            ..AppConfig::default()
+        };
+        let manager = EngineManager::from_config(&config);
+        for id in ["agy", "agy_work"] {
+            let handle = manager.handle(id).await.unwrap();
+            assert!(matches!(handle, EngineHandle::Acp(_)));
+            assert_eq!(handle.id(), id);
+            assert_eq!(handle.kind(), "agy");
+            assert!(!handle.engine().supports_steering());
+            let info = handle.info().await;
+            assert_eq!(info.kind, "agy");
+            assert_eq!(info.capabilities.diffs, Some(false));
+            assert!(!info.models.is_empty());
+        }
+        let before = manager.handle("agy_work").await.unwrap();
+        manager.apply_chat_providers(&config.chat_providers).await;
+        let after = manager.handle("agy_work").await.unwrap();
+        match (before, after) {
+            (EngineHandle::Acp(before), EngineHandle::Acp(after)) => {
+                assert!(Arc::ptr_eq(&before, &after))
+            }
+            _ => panic!("Antigravity instance was not ACP"),
+        }
+        manager.apply_chat_providers(&[]).await;
+        assert!(manager.handle("agy_work").await.is_none());
+        assert!(manager.handle("agy").await.is_some());
     }
 
     fn provider_entry(id: &str, kind: &str, enabled: bool) -> ChatProviderInstanceConfig {

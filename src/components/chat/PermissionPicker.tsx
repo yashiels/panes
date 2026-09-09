@@ -127,7 +127,7 @@ export function PermissionPicker({
   const [open, setOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("");
   const presetsAvailable =
-    engineId !== undefined && engineKind(engineId) !== "hermes" && presetValue !== undefined && onPresetChange !== undefined;
+    engineId !== undefined && !["hermes", "agy"].includes(engineKind(engineId)) && presetValue !== undefined && onPresetChange !== undefined;
   const [view, setView] = useState<"presets" | "advanced">(
     presetsAvailable ? "presets" : "advanced",
   );

@@ -291,6 +291,8 @@ pub struct ChatProviderUsageWindowDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineCapabilitiesDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diffs: Option<bool>,
     #[serde(default)]
     pub permission_modes: Vec<String>,
     #[serde(default)]

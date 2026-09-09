@@ -977,3 +977,205 @@ async fn acp_hermes_configuration_change_reaps_initializing_sessions() {
         std::fs::remove_dir_all(directory).unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires installed Antigravity and a configured model endpoint"]
+async fn acp_agy_real_profile_smoke() {
+    let directory = std::env::temp_dir().join(format!("panes-agy-live-{}", Uuid::new_v4()));
+    std::fs::create_dir(&directory).unwrap();
+    let engine = Arc::new(AcpEngine::agy(
+        "agy",
+        "Antigravity",
+        super::super::EngineInstanceSettings::default(),
+    ));
+    let health = engine.health_report().await;
+    assert!(health.available, "{:?}", health.details);
+    let thread = engine
+        .start_thread(
+            ThreadScope::Repo {
+                repo_path: directory.to_string_lossy().into_owned(),
+            },
+            None,
+            super::super::agy::DEFAULT_MODEL,
+            sandbox(),
+        )
+        .await
+        .unwrap();
+    let session = thread.engine_thread_id.clone();
+    let runner = engine.clone();
+    let (sender, mut receiver) = mpsc::channel(64);
+    let task = tokio::spawn(async move {
+        runner
+            .send_message(
+                &session,
+                TurnInput {
+                    message: "Reply with Antigravity ACP fixture ok. Do not use tools.".into(),
+                    input_items: vec![],
+                    ..input()
+                },
+                sender,
+                CancellationToken::new(),
+            )
+            .await
+    });
+    let events = timeout(Duration::from_secs(90), async {
+        let mut events = vec![];
+        while let Some(event) = receiver.recv().await {
+            events.push(event);
+        }
+        events
+    })
+    .await
+    .unwrap();
+    task.await.unwrap().unwrap();
+    engine
+        .archive_thread(&thread.engine_thread_id)
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    terminal(&events, TurnCompletionStatus::Completed);
+    assert!(events
+        .iter()
+        .any(|event| matches!(event, EngineEvent::TextDelta { content } if !content.is_empty())));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn acp_agy_profile_selected_model_and_text_turn() {
+    use std::os::unix::fs::PermissionsExt;
+    let python = which::which("python3").unwrap();
+    let directory = std::env::temp_dir().join(format!("panes-agy-test-{}", Uuid::new_v4()));
+    std::fs::create_dir(&directory).unwrap();
+    let executable = directory.join("agy");
+    let log = directory.join("requests.jsonl");
+    let quote = |value: &str| format!("'{}'", value.replace('\'', "'\\''"));
+    std::fs::write(
+        &executable,
+        format!(
+            "#!/bin/sh\nexec {} {} agy {}\n",
+            quote(&python.to_string_lossy()),
+            quote(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/acp/fake_server.py"
+            )),
+            quote(&log.to_string_lossy())
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config = crate::config::app_config::AppConfig {
+        chat_providers: vec![crate::config::app_config::ChatProviderInstanceConfig {
+            id: "agy_work".into(),
+            kind: "agy".into(),
+            display_name: "Antigravity Work".into(),
+            binary_path: Some(executable.to_string_lossy().into_owned()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let manager = super::super::EngineManager::from_config(&config);
+    let handle = manager.handle("agy_work").await.unwrap();
+    assert_eq!(handle.kind(), "agy");
+    let engine = match handle {
+        super::super::EngineHandle::Acp(engine) => engine,
+        _ => panic!("Antigravity ACP handle"),
+    };
+    let thread = engine
+        .start_thread(
+            ThreadScope::Repo {
+                repo_path: directory.to_string_lossy().into_owned(),
+            },
+            None,
+            super::super::agy::DEFAULT_MODEL,
+            sandbox(),
+        )
+        .await
+        .unwrap();
+    let selected = engine
+        .models()
+        .into_iter()
+        .find(|model| model.id == "claude-sonnet-4-6")
+        .unwrap();
+    engine
+        .start_thread(
+            ThreadScope::Repo {
+                repo_path: directory.to_string_lossy().into_owned(),
+            },
+            Some(&thread.engine_thread_id),
+            &selected.id,
+            sandbox(),
+        )
+        .await
+        .unwrap();
+    let (sender, mut receiver) = mpsc::channel(64);
+    let runner = engine.clone();
+    let session = thread.engine_thread_id.clone();
+    let task = tokio::spawn(async move {
+        runner
+            .send_message(
+                &session,
+                TurnInput {
+                    input_items: vec![super::super::TurnInputItem::Text {
+                        text: "fixture".into(),
+                    }],
+                    ..input()
+                },
+                sender,
+                CancellationToken::new(),
+            )
+            .await
+    });
+    let mut events = vec![];
+    timeout(Duration::from_secs(15), async {
+        while let Some(event) = receiver.recv().await {
+            if let EngineEvent::ApprovalRequested { approval_id, .. } = &event {
+                engine
+                    .respond_to_approval(
+                        approval_id,
+                        json!({"optionId":"original/allow-once"}),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            events.push(event);
+        }
+    })
+    .await
+    .unwrap();
+    task.await.unwrap().unwrap();
+    terminal(&events, TurnCompletionStatus::Completed);
+    let text: String = events
+        .iter()
+        .filter_map(|event| match event {
+            EngineEvent::TextDelta { content } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(text.contains("sample.txt"));
+    engine
+        .archive_thread(&thread.engine_thread_id)
+        .await
+        .unwrap();
+    let requests: Vec<Value> = std::fs::read_to_string(log)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|frame| frame["method"] == "session/new")
+            .count(),
+        1
+    );
+    assert!(requests
+        .iter()
+        .any(|frame| frame["method"] == "session/set_config_option"
+            && frame["params"]["value"] == selected.id));
+    assert!(requests
+        .iter()
+        .any(|frame| frame["method"] == "session/prompt"
+            && frame["params"]["prompt"][0]["text"] == "fixture"));
+    std::fs::remove_dir_all(directory).unwrap();
+}

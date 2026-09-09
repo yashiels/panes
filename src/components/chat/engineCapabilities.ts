@@ -31,6 +31,8 @@ function fallbackEngineCapabilities(engineId?: string | null): EngineCapabilitie
       return CODEX_CAPABILITIES;
     case "claude":
       return CLAUDE_CAPABILITIES;
+    case "agy":
+      return { permissionModes: [], sandboxModes: [], approvalDecisions: ["cancel"], diffs: false };
     case "hermes":
       return {
         permissionModes: [],
@@ -50,6 +52,7 @@ export function resolveEngineCapabilities(
 ): EngineCapabilities {
   const fallback = fallbackEngineCapabilities(engineId);
   return {
+    diffs: capabilities?.diffs ?? fallback.diffs,
     permissionModes:
       Array.isArray(capabilities?.permissionModes) && capabilities.permissionModes.length > 0
         ? capabilities.permissionModes

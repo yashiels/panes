@@ -7,6 +7,7 @@ export const HARNESS_INSTALL_COMMANDS: Readonly<Record<string, string>> = {
   antigravity: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
   kiro: "curl -fsSL https://cli.kiro.dev/install | bash",
   opencode: "npm install -g opencode-ai",
+  agy: "test \"$(uname -sm)\" = \"Darwin arm64\" && mkdir -p \"$HOME/.local/bin\" && agy_adapter_tmp=$(mktemp) && curl -fL https://github.com/shubzkothekar/antigravity-acp/releases/download/v1.1.0/agy-acp-darwin-arm64 -o \"$agy_adapter_tmp\" && echo \"9ef7afa432341c05d6c049d143349ea71fbb48989813ba625054a7224e2804fc  $agy_adapter_tmp\" | shasum -a 256 -c - && install -m 755 \"$agy_adapter_tmp\" \"$HOME/.local/bin/agy-acp\" && rm \"$agy_adapter_tmp\"",
   hermes: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
   "kilo-code": "npm install -g @kilocode/cli",
   "factory-droid": "curl -fsSL https://app.factory.ai/cli | sh",

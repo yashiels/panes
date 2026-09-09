@@ -39,6 +39,18 @@ struct HarnessDef {
 
 const HARNESSES: &[HarnessDef] = &[
     HarnessDef {
+        id: "agy",
+        name: "Antigravity ACP",
+        description: "Antigravity CLI through the third-party ACP adapter",
+        command: "agy-acp",
+        version_flag: "--version",
+        install_command: None,
+        install_args: &[],
+        install_script: None,
+        website: "https://github.com/shubzkothekar/antigravity-acp/releases/tag/v1.1.0",
+        native: true,
+    },
+    HarnessDef {
         id: "hermes",
         name: "Hermes",
         description: "Nous Research's agent, integrated with Panes through ACP",
@@ -355,7 +367,11 @@ pub async fn set_harness_launch_args(
 // ---------------------------------------------------------------------------
 
 async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
-    let executable = if def.id == "hermes" {
+    let executable = if def.id == "agy" {
+        crate::engines::agy::launch("agy", "Antigravity", &Default::default())
+            .ok()
+            .map(|launch| launch.executable)
+    } else if def.id == "hermes" {
         crate::engines::hermes::launch("hermes", "Hermes", &Default::default())
             .ok()
             .map(|launch| launch.executable)

@@ -557,7 +557,10 @@ async fn prepare_send_message_turn(
     } else {
         configured_reasoning_effort.clone()
     };
-    let supports_panes_sandbox = !matches!(engine_kind(&thread.engine_id), "opencode" | "hermes");
+    let supports_panes_sandbox = !matches!(
+        engine_kind(&thread.engine_id),
+        "opencode" | "hermes" | "agy"
+    );
     let sandbox_mode_override =
         thread_sandbox_mode_for_engine(&thread.engine_id, thread.engine_metadata.as_ref())?;
     let sandbox_mode = supports_panes_sandbox.then(|| {
@@ -4498,7 +4501,7 @@ fn approval_policy_for_engine_and_trust_level(
     trust_level: &TrustLevelDto,
 ) -> Option<&'static str> {
     Some(match engine_kind(engine_id) {
-        "hermes" => return None,
+        "hermes" | "agy" => return None,
         "claude" => match trust_level {
             TrustLevelDto::Trusted => "trusted",
             TrustLevelDto::Standard => "standard",
@@ -4525,7 +4528,7 @@ fn thread_approval_policy_override_value(
     metadata: Option<&Value>,
 ) -> Result<Option<Value>, String> {
     match engine_kind(engine_id) {
-        "hermes" => Ok(None),
+        "hermes" | "agy" => Ok(None),
         "claude" => Ok(metadata
             .and_then(|value| value.get("claudePermissionMode"))
             .and_then(Value::as_str)
@@ -4556,7 +4559,7 @@ fn thread_sandbox_mode_for_engine(
     metadata: Option<&Value>,
 ) -> Result<Option<String>, String> {
     match engine_kind(engine_id) {
-        "hermes" | "opencode" => Ok(None),
+        "hermes" | "agy" | "opencode" => Ok(None),
         _ => thread_sandbox_mode(metadata),
     }
 }
@@ -5021,6 +5024,7 @@ mod tests {
                 supported_reasoning_efforts: Vec::new(),
             }],
             capabilities: EngineCapabilitiesDto {
+                diffs: None,
                 permission_modes: Vec::new(),
                 sandbox_modes: Vec::new(),
                 approval_decisions: Vec::new(),
@@ -5490,7 +5494,7 @@ mod tests {
 
     #[test]
     fn hermes_ignores_sandbox_overrides_including_invalid_legacy_values() {
-        for id in ["hermes", "hermes_work"] {
+        for id in ["hermes", "hermes_work", "agy", "agy_work"] {
             assert_eq!(thread_sandbox_mode_for_engine(id, None).unwrap(), None);
             for mode in [
                 "workspace-write",
@@ -5525,7 +5529,7 @@ mod tests {
     #[test]
     fn hermes_has_no_approval_policy_or_inherited_override() {
         let metadata = serde_json::json!({"sandboxApprovalPolicy": {"invalid": true}, "claudePermissionMode": "trusted", "opencodePermissionMode": "allow"});
-        for id in ["hermes", "hermes_work"] {
+        for id in ["hermes", "hermes_work", "agy", "agy_work"] {
             for trust in [
                 TrustLevelDto::Trusted,
                 TrustLevelDto::Standard,
@@ -6780,6 +6784,7 @@ mod tests {
                 ],
             }],
             capabilities: EngineCapabilitiesDto {
+                diffs: None,
                 permission_modes: Vec::new(),
                 sandbox_modes: Vec::new(),
                 approval_decisions: Vec::new(),
@@ -6829,6 +6834,7 @@ mod tests {
                 ],
             }],
             capabilities: EngineCapabilitiesDto {
+                diffs: None,
                 permission_modes: Vec::new(),
                 sandbox_modes: Vec::new(),
                 approval_decisions: Vec::new(),

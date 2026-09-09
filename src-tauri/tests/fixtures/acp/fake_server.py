@@ -80,10 +80,26 @@ while True:
                 frames = [json.loads(line) for line in Path(__file__).with_name('hermes-text.jsonl').read_text().splitlines()]
                 response['models'] = next(frame['result']['models'] for frame in frames if 'models' in frame.get('result', {}))
             result(request_id, response)
+    elif method == 'session/set_config_option' and scenario == 'agy':
+        assert request['params']['configId'] == 'model'
+        from pathlib import Path
+        frames = [json.loads(line) for line in Path(__file__).with_name('agy-prompt.jsonl').read_text().splitlines()]
+        options = next(frame['params']['update'] for frame in frames if any(option['id'] == 'model' for option in frame.get('params', {}).get('update', {}).get('configOptions', [])))
+        result(request_id, {'configOptions': options['configOptions']})
     elif method == 'session/set_model':
         result(request_id, {})
     elif method == 'session/prompt':
         prompt_count += 1
+        if scenario == 'agy':
+            from pathlib import Path
+            frames = [json.loads(line) for line in Path(__file__).with_name('agy-prompt.jsonl').read_text().splitlines()]
+            for frame in frames:
+                if frame.get('method') == 'session/update':
+                    frame['params']['sessionId'] = session
+                    send(frame)
+                elif 'result' in frame:
+                    result(request_id, frame['result'])
+            continue
         if scenario == 'death':
             sys.exit(17)
         if scenario == 'malformed':

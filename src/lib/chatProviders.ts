@@ -2,7 +2,7 @@ import type { ChatProviderInstance } from "../types";
 
 /** Default config directory for an extra provider instance. */
 export function defaultChatProviderHomePath(kind: string, slug: string): string {
-  return `~/.${kind}-${slug}`;
+  return kind === "agy" ? "" : `~/.${kind}-${slug}`;
 }
 
 function shellQuote(value: string): string {
@@ -29,14 +29,14 @@ function shellQuotePath(value: string): string {
 export function chatProviderSignInCommand(provider: ChatProviderInstance): string {
   const env: string[] = [];
   const homeKey = provider.kind === "codex" ? "CODEX_HOME" : provider.kind === "hermes" ? "HERMES_HOME" : "CLAUDE_CONFIG_DIR";
-  if (provider.homePath) {
+  if (provider.homePath && provider.kind !== "agy") {
     env.push(`${homeKey}=${shellQuotePath(provider.homePath)}`);
   }
   for (const [name, value] of Object.entries(provider.env)) {
     if (name === homeKey && provider.homePath) continue;
     env.push(`${name}=${shellQuote(value)}`);
   }
-  const binary = provider.binaryPath ? shellQuotePath(provider.binaryPath) : provider.kind;
-  const login = provider.kind === "codex" ? "login" : provider.kind === "hermes" ? "setup" : "auth login";
-  return [...env, binary, login].join(" ");
+  const binary = provider.kind === "agy" ? (provider.env.AGY_BIN ? shellQuotePath(provider.env.AGY_BIN) : "agy") : provider.binaryPath ? shellQuotePath(provider.binaryPath) : provider.kind;
+  const login = provider.kind === "codex" ? "login" : provider.kind === "hermes" ? "setup" : provider.kind === "agy" ? "" : "auth login";
+  return [...env, binary, login].filter(Boolean).join(" ");
 }

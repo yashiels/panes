@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 use crate::config::app_config::ChatProviderInstanceConfig;
 use crate::runtime_env;
 
-pub const ENGINE_KINDS: &[&str] = &["codex", "claude", "opencode", "hermes"];
+pub const ENGINE_KINDS: &[&str] = &["codex", "claude", "opencode", "hermes", "agy"];
 
 /// Resolves the engine kind for an engine id. Built-in ids are their own
 /// kind; extra instances are named `<kind>_<slug>`.
@@ -184,6 +184,11 @@ mod tests {
         assert_eq!(engine_kind("hermes"), "hermes");
         assert_eq!(engine_kind("hermes_work"), "hermes");
         assert_eq!(engine_kind("hermes_"), "hermes_");
+        assert_eq!(engine_kind("agy"), "agy");
+        assert_eq!(engine_kind("agy_work"), "agy");
+        assert_eq!(engine_kind("agy_"), "agy_");
+        assert!(is_builtin_engine_id("agy"));
+        assert!(!is_builtin_engine_id("agy_work"));
         assert!(is_builtin_engine_id("hermes"));
         assert!(!is_builtin_engine_id("hermes_work"));
     }

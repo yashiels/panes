@@ -155,7 +155,7 @@ export type ThreadStatus =
   | "error"
   | "completed";
 
-export type ChatEngineId = "codex" | "claude" | "opencode" | "hermes";
+export type ChatEngineId = "codex" | "claude" | "opencode" | "hermes" | "agy";
 
 export interface Thread {
   id: string;
@@ -545,6 +545,7 @@ export interface ChatProviderUsageWindow {
 }
 
 export interface EngineCapabilities {
+  diffs?: boolean;
   permissionModes: string[];
   sandboxModes: string[];
   approvalDecisions: string[];

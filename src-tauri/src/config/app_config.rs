@@ -44,7 +44,7 @@ pub struct AppConfig {
     pub chat_providers: Vec<ChatProviderInstanceConfig>,
 }
 
-pub const CHAT_PROVIDER_KINDS: &[&str] = &["codex", "claude", "hermes"];
+pub const CHAT_PROVIDER_KINDS: &[&str] = &["codex", "claude", "hermes", "agy"];
 const CHAT_PROVIDER_SLUG_MAX_CHARS: usize = 48;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -769,6 +769,18 @@ max_action_output_chars = 20000
                 id: id.to_string(),
                 kind: "hermes".to_string(),
                 display_name: "Hermes".to_string(),
+                ..Default::default()
+            };
+            assert!(entry.validate().is_ok());
+        }
+    }
+    #[test]
+    fn agy_provider_entries_accept_builtin_and_custom_instances() {
+        for id in ["agy", "agy_work"] {
+            let entry = ChatProviderInstanceConfig {
+                id: id.to_string(),
+                kind: "agy".to_string(),
+                display_name: "Antigravity".to_string(),
                 ..Default::default()
             };
             assert!(entry.validate().is_ok());

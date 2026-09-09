@@ -76,6 +76,9 @@ jobs:
       - name: ACP substrate tests
         working-directory: src-tauri
         run: cargo test engines::acp --lib
+      - name: Antigravity engine and integration tests
+        working-directory: src-tauri
+        run: cargo test agy --lib
       - name: Hermes engine and integration tests
         working-directory: src-tauri
         run: cargo test hermes --lib

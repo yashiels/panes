@@ -674,7 +674,7 @@ const AUTONOMY_PRESET_IDS: [&str; 5] = ["inherit", "read-only", "ask", "auto", "
 fn available_autonomy_presets(engine_id: &str) -> &'static [&'static str] {
     // OpenCode exposes approvals only, and its `allow` mode never asks, so a
     // sandboxed "auto in workspace" rung does not exist there.
-    if engine_kind(engine_id) == "hermes" {
+    if matches!(engine_kind(engine_id), "hermes" | "agy") {
         &["inherit"]
     } else if engine_kind(engine_id) == "opencode" {
         &["inherit", "read-only", "ask", "full"]
@@ -714,8 +714,8 @@ fn autonomy_policy_for_preset(
 ) -> Result<AutonomyPresetPolicy, String> {
     let preset = resolve_autonomy_preset_for_engine(engine_id, requested_preset);
     let policy = match engine_kind(engine_id) {
-        "hermes" => {
-            return Err("Hermes permissions are requested individually through ACP".to_string())
+        "hermes" | "agy" => {
+            return Err("Permissions are requested individually through ACP".to_string())
         }
         "opencode" => AutonomyPresetPolicy {
             approval_policy: json!(match preset {
@@ -2558,7 +2558,7 @@ fn approval_policy_for_engine_and_trust_level(
     trust_level: &TrustLevelDto,
 ) -> Option<&'static str> {
     Some(match engine_kind(engine_id) {
-        "hermes" => return None,
+        "hermes" | "agy" => return None,
         "claude" => match trust_level {
             TrustLevelDto::Trusted => "trusted",
             TrustLevelDto::Standard => "standard",
@@ -2584,7 +2584,7 @@ fn thread_approval_policy_override_value(
     metadata: Option<&Value>,
 ) -> Result<Option<Value>, String> {
     match engine_kind(engine_id) {
-        "hermes" => Ok(None),
+        "hermes" | "agy" => Ok(None),
         "claude" => Ok(metadata
             .and_then(|value| value.get("claudePermissionMode"))
             .and_then(Value::as_str)
@@ -2865,7 +2865,7 @@ fn normalize_thread_approval_policy_for_engine(
     };
 
     match engine_kind(engine_id) {
-        "hermes" => Err("Hermes permissions are requested individually through ACP".to_string()),
+        "hermes" | "agy" => Err("Permissions are requested individually through ACP".to_string()),
         "claude" => {
             let normalized = value
                 .as_str()
@@ -3371,7 +3371,7 @@ mod tests {
 
     #[test]
     fn hermes_autonomy_presets_inherit_runtime_permissions() {
-        for id in ["hermes", "hermes_work"] {
+        for id in ["hermes", "hermes_work", "agy", "agy_work"] {
             assert_eq!(available_autonomy_presets(id), &["inherit"]);
             for preset in AUTONOMY_PRESET_IDS {
                 assert_eq!(resolve_autonomy_preset_for_engine(id, preset), "inherit");
