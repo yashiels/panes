@@ -178,7 +178,8 @@
       "settleThread": "Concluir thread",
       "unsettleThread": "Retomar thread",
       "markThreadUnread": "Marcar thread como não lida",
-      "hermesSetup": "Configurar Hermes"
+      "hermesSetup": "Configurar Hermes",
+      "agySetup": "Configurar Antigravity"
     },
     "descriptions": {
       "switchThread": "Navegue pelas threads recentes",
@@ -187,7 +188,8 @@
       "codexCompact": "Comprimir a janela de contexto da thread",
       "codexRollback": "Desfazer as rodadas mais recentes",
       "codexReview": "Revisar alterações não commitadas com o Codex",
-      "hermesSetup": "Gerencie a instalação, o diretório de configuração e a conta do Hermes"
+      "hermesSetup": "Gerencie a instalação, o diretório de configuração e a conta do Hermes",
+      "agySetup": "Instale agy e o adaptador ACP e execute agy para entrar. Verifique o status novamente ao terminar."
     },
     "group": {
       "search": "Busca",
@@ -450,7 +452,8 @@
       "opencode": "Assistente de código open source para chat, edições e fluxos no terminal",
       "kilo-code": "CLI leve de assistência de código para tarefas do dia a dia no repo",
       "factory-droid": "Coding agent autônomo da Factory para implementações maiores",
-      "hermes": "Hermes Agent da Nous Research, com chat, ferramentas e solicitações de permissão"
+      "hermes": "Hermes Agent da Nous Research, com chat, ferramentas e solicitações de permissão",
+      "agy": "Antigravity CLI com chat, ferramentas e solicitações de permissão"
     }
   },
   "editor": {

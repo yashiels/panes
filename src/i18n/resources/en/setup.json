@@ -40,6 +40,9 @@
       },
       "hermes": {
         "description": "Chat with Hermes Agent. Install Hermes, then run hermes setup to configure your model provider."
+      },
+      "agy": {
+        "description": "Chat with Antigravity. Install agy and the ACP adapter, then run agy to sign in."
       }
     }
   },
@@ -71,7 +74,8 @@
       "showNotes": "Show warnings",
       "hideNotes": "Hide warnings"
     },
-    "hermesSetup": "Install Hermes, then run hermes setup in a terminal to select your model provider. Recheck readiness when finished."
+    "hermesSetup": "Install Hermes, then run hermes setup in a terminal to select your model provider. Recheck readiness when finished.",
+    "agySetup": "Install agy and the ACP adapter, then run agy to sign in. Recheck readiness when finished."
   },
   "workspace": {
     "title": "Confirm your first workspace",

@@ -113,6 +113,7 @@ export function getHarnessIcon(id: string, size = 16): ReactNode {
       return <span style={style}><ClaudeCodeLogo size={size} /></span>;
     case "gemini-cli":
       return <span style={style}><GeminiCliLogo size={size} /></span>;
+    case "agy":
     case "antigravity":
       return <span style={style}><AntigravityLogo size={size} /></span>;
     case "kiro":

@@ -40,6 +40,9 @@
       },
       "hermes": {
         "description": "Converse com o Hermes Agent. Instale o Hermes e execute hermes setup para configurar o provedor de modelos."
+      },
+      "agy": {
+        "description": "Converse com Antigravity. Instale agy e o adaptador ACP e execute agy para entrar."
       }
     }
   },
@@ -71,7 +74,8 @@
       "showNotes": "Mostrar avisos",
       "hideNotes": "Ocultar avisos"
     },
-    "hermesSetup": "Instale o Hermes e execute hermes setup em um terminal para selecionar o provedor de modelos. Verifique o status novamente ao terminar."
+    "hermesSetup": "Instale o Hermes e execute hermes setup em um terminal para selecionar o provedor de modelos. Verifique o status novamente ao terminar.",
+    "agySetup": "Instale agy e o adaptador ACP e execute agy para entrar. Verifique o status novamente ao terminar."
   },
   "workspace": {
     "title": "Confirme seu primeiro workspace",

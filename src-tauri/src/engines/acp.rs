@@ -75,7 +75,8 @@ pub struct AcpEngine {
     launch: AcpLaunchConfig,
     instance: Uuid,
     configuration: Mutex<ConfigurationGeneration>,
-    hermes_settings: Option<Mutex<super::EngineInstanceSettings>>,
+    product_kind: &'static str,
+    profile_settings: Option<Mutex<super::EngineInstanceSettings>>,
     runtime_models: Mutex<Vec<ModelInfo>>,
     sessions: Mutex<HashMap<String, Arc<SessionSlot>>>,
 }
@@ -89,7 +90,8 @@ impl AcpEngine {
                 revision: 0,
                 shutdown: CancellationToken::new(),
             }),
-            hermes_settings: None,
+            product_kind: "acp",
+            profile_settings: None,
             runtime_models: Mutex::new(Vec::new()),
             sessions: Mutex::new(HashMap::new()),
         }
@@ -105,22 +107,29 @@ impl AcpEngine {
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             turn_timeout: DEFAULT_TURN_TIMEOUT,
         });
-        engine.hermes_settings = Some(Mutex::new(settings));
+        engine.product_kind = "hermes";
+        engine.profile_settings = Some(Mutex::new(settings));
+        engine
+    }
+
+    pub fn agy(id: &str, name: &str, settings: super::EngineInstanceSettings) -> Self {
+        let mut engine = Self::hermes(id, name, settings);
+        engine.product_kind = "agy";
         engine
     }
 
     pub fn kind(&self) -> &'static str {
-        if self.hermes_settings.is_some() {
-            "hermes"
-        } else {
-            "acp"
-        }
+        self.product_kind
     }
 
     fn launch_snapshot(&self) -> Result<AcpLaunchConfig> {
-        match &self.hermes_settings {
+        match &self.profile_settings {
             Some(settings) => {
-                super::hermes::launch(self.id(), self.name(), &settings.lock().unwrap())
+                if self.kind() == "agy" {
+                    super::agy::launch(self.id(), self.name(), &settings.lock().unwrap())
+                } else {
+                    super::hermes::launch(self.id(), self.name(), &settings.lock().unwrap())
+                }
             }
             None => Ok(self.launch.clone()),
         }
@@ -135,7 +144,7 @@ impl AcpEngine {
         settings: super::EngineInstanceSettings,
     ) -> Vec<Arc<Process>> {
         let mut configuration = self.configuration.lock().unwrap();
-        let changed = self.hermes_settings.as_ref().is_some_and(|current| {
+        let changed = self.profile_settings.as_ref().is_some_and(|current| {
             let mut current = current.lock().unwrap();
             if *current == settings {
                 return false;
@@ -190,7 +199,7 @@ impl AcpEngine {
         let (available, version, details) = match result {
             Ok(init) => (true, init.agent_info.map(|info| info.version),
                 format!("{} ACP protocol 1 is ready. Model credentials are checked on the first turn.", self.name())),
-            Err(error) => (false, None, format!("{} ACP could not start: {error:#}. Check the provider binary path and its Python virtual environment; run hermes setup for model credentials.", self.name())),
+            Err(error) => (false, None, format!("{} ACP could not start: {error:#}. Check the provider adapter path and CLI credentials.", self.name())),
         };
         crate::models::EngineHealthDto {
             id: self.id().into(),
@@ -202,7 +211,11 @@ impl AcpEngine {
             fixes: if available {
                 vec![]
             } else {
-                vec!["hermes setup".into()]
+                vec![if self.kind() == "agy" {
+                    "Install agy-acp v1.1.0 and run agy to sign in".into()
+                } else {
+                    "hermes setup".into()
+                }]
             },
             protocol_diagnostics: None,
         }
@@ -214,7 +227,7 @@ impl AcpEngine {
             configuration.revision == process.configuration_revision,
             "ACP configuration changed while starting session"
         );
-        if self.hermes_settings.is_some() {
+        if self.kind() == "hermes" {
             if let Some(models) = super::hermes::session_models(response)? {
                 let mut catalog = super::hermes::fallback_models();
                 catalog.extend(
@@ -240,7 +253,30 @@ impl AcpEngine {
     }
 
     async fn select_model(&self, process: &Process, session: &str, model: &str) -> Result<()> {
-        if self.hermes_settings.is_none() {
+        if self.profile_settings.is_none() {
+            return Ok(());
+        }
+        if self.kind() == "agy" {
+            let selected = if model.is_empty() {
+                super::agy::DEFAULT_MODEL
+            } else {
+                model
+            };
+            ensure!(
+                super::agy::fallback_models()
+                    .iter()
+                    .any(|model| model.id == selected),
+                "Unknown Antigravity model slug: {selected}"
+            );
+            if process.model.lock().unwrap().as_deref() != Some(selected) {
+                let _: Value = process
+                    .rpc(
+                        "session/set_config_option",
+                        json!({"sessionId": session, "configId": "model", "value": selected}),
+                    )
+                    .await?;
+                *process.model.lock().unwrap() = Some(selected.into());
+            }
             return Ok(());
         }
         let selected = if model.is_empty() || model == super::hermes::DEFAULT_MODEL {
@@ -326,8 +362,12 @@ impl Engine for AcpEngine {
     }
     fn models(&self) -> Vec<ModelInfo> {
         let models = self.runtime_models.lock().unwrap();
-        if models.is_empty() && self.hermes_settings.is_some() {
-            super::hermes::fallback_models()
+        if models.is_empty() && self.profile_settings.is_some() {
+            if self.kind() == "agy" {
+                super::agy::fallback_models()
+            } else {
+                super::hermes::fallback_models()
+            }
         } else {
             models.clone()
         }
@@ -345,7 +385,7 @@ impl Engine for AcpEngine {
         sandbox: SandboxPolicy,
     ) -> Result<EngineThread> {
         ensure!(
-            model.is_empty() || self.hermes_settings.is_some(),
+            model.is_empty() || self.profile_settings.is_some(),
             "ACP model selection requires a launch profile"
         );
         ensure!(

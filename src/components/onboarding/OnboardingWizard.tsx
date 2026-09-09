@@ -72,6 +72,7 @@ const CHAT_ENGINE_OPTIONS: Array<{
   { id: "codex", descriptionKey: "chatEngines.options.codex.description" },
   { id: "claude", descriptionKey: "chatEngines.options.claude.description" },
   { id: "hermes", descriptionKey: "chatEngines.options.hermes.description" },
+  { id: "agy", descriptionKey: "chatEngines.options.agy.description" },
   { id: "opencode", descriptionKey: "chatEngines.options.opencode.description" },
 ];
 
@@ -81,6 +82,8 @@ function chatEngineLabel(engineId: OnboardingChatEngineId): string {
       return "Codex";
     case "claude":
       return "Claude";
+    case "agy":
+      return "Antigravity";
     case "hermes":
       return "Hermes";
     case "opencode":
@@ -1367,6 +1370,15 @@ export function OnboardingWizard() {
                       disabled={false}
                       description={t("setup:chatReadiness.hermesSetup")}
                       command={getHarnessInstallCommand("hermes") ?? "hermes setup"}
+                      installing={false}
+                    />
+                  ) : null}
+                  {selectedChatEngines.includes("agy") && !readiness.engineHealth.agy?.available ? (
+                    <ReadinessDependencyCard
+                      label="Antigravity"
+                      disabled={false}
+                      description={t("setup:chatReadiness.agySetup")}
+                      command={getHarnessInstallCommand("agy") ?? "agy"}
                       installing={false}
                     />
                   ) : null}

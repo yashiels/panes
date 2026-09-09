@@ -112,6 +112,7 @@ function formatModelName(name: string): string {
     opencode: "OpenCode",
     claude: "Claude",
     hermes: "Hermes",
+    agy: "Antigravity",
     opus: "Opus",
     sonnet: "Sonnet",
     haiku: "Haiku",

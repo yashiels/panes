@@ -223,7 +223,7 @@ export function canUseApprovalDecisionActions(
   details?: Record<string, unknown>,
 ): boolean {
   return (
-    engineKind(engineId) !== "hermes" &&
+    !["hermes", "agy"].includes(engineKind(engineId)) &&
     (engineKind(engineId) !== "opencode" || !isOpenCodeQuestionApproval(details))
   );
 }
@@ -4060,7 +4060,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       text,
       attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
       inputItems: inputItems && inputItems.length > 0 ? inputItems : undefined,
-      planMode: ["opencode", "hermes"].includes(engineKind(engineId)) ? false : planMode,
+      planMode: ["opencode", "hermes", "agy"].includes(engineKind(engineId)) ? false : planMode,
       engineId,
       modelId: runtime && runtime.engineId === engineId ? runtime.modelId : activeThread.modelId,
       reasoningEffort:
@@ -4142,7 +4142,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
     const submitEngineId = composerRuntime.engineId;
     const submitModelId = composerRuntime.modelId;
     const submitReasoningEffort = composerRuntime.reasoningEffort;
-    const submitPlanMode = ["opencode", "hermes"].includes(engineKind(submitEngineId)) ? false : planMode;
+    const submitPlanMode = ["opencode", "hermes", "agy"].includes(engineKind(submitEngineId)) ? false : planMode;
 
     const activeScopeRepoId = activeRepo?.id ?? null;
     const activeThreadInScope = activeThread
@@ -4384,7 +4384,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
       }
       setThreadLastModelLocal(prompt.threadId, prompt.modelId);
 
-      const promptPlanMode = ["opencode", "hermes"].includes(engineKind(prompt.engineId)) ? false : prompt.planMode;
+      const promptPlanMode = ["opencode", "hermes", "agy"].includes(engineKind(prompt.engineId)) ? false : prompt.planMode;
       const sent = await send(prompt.text, {
         threadIdOverride: prompt.threadId,
         engineId: prompt.engineId,
@@ -5651,7 +5651,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
           {activeApproval && (() => {
             const approval = activeApproval;
             const details = approval.details ?? {};
-            const isAcpApproval = engineKind(activeThread?.engineId) === "hermes";
+            const isAcpApproval = ["hermes", "agy"].includes(engineKind(activeThread?.engineId));
             const acpOptions = isAcpApproval ? acpPermissionOptions(details) : [];
             const isPermissionsRequest = isPermissionsRequestApproval(details);
             const isToolInputRequest = isRequestUserInputApproval(details);
@@ -6216,7 +6216,7 @@ export function ChatPanel({ embedded = false }: ChatPanelProps = {}) {
                       manuallyOverrodeThreadSelectionRef.current = true;
                       setHasExplicitComposerRuntime(true);
                       selectedEngineIdRef.current = engineId;
-                      if (["opencode", "hermes"].includes(engineKind(engineId))) setPlanMode(false);
+                      if (["opencode", "hermes", "agy"].includes(engineKind(engineId))) setPlanMode(false);
                       if (engineId !== selectedEngineId) setSelectedEngineId(engineId);
                       const nextEngine =
                         engines.find((engine) => engine.id === engineId) ?? null;

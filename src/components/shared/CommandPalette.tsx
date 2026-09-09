@@ -622,6 +622,18 @@ export function getStaticCommands(
     },
   },
   {
+    id: "agy-setup",
+    label: t("commandPalette.commands.agySetup"),
+    description: t("commandPalette.descriptions.agySetup"),
+    icon: SquareTerminal,
+    group: "navigation",
+    keywords: ["agy", "provider", "setup", "account"],
+    action: ({ close }) => {
+      close();
+      useUiStore.getState().openSettings(null, "chat");
+    },
+  },
+  {
     id: "switch-thread",
     label: t("commandPalette.commands.switchThread"),
     description: t("commandPalette.descriptions.switchThread"),

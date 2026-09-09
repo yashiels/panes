@@ -1,8 +1,8 @@
-export const ENGINE_KINDS = ["codex", "claude", "opencode", "hermes"] as const;
+export const ENGINE_KINDS = ["codex", "claude", "opencode", "hermes", "agy"] as const;
 
 export type EngineKind = (typeof ENGINE_KINDS)[number];
 
-export const CHAT_PROVIDER_KINDS = ["codex", "claude", "hermes"] as const;
+export const CHAT_PROVIDER_KINDS = ["codex", "claude", "hermes", "agy"] as const;
 
 export type ChatProviderKind = (typeof CHAT_PROVIDER_KINDS)[number];
 
