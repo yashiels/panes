@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 use crate::config::app_config::ChatProviderInstanceConfig;
 use crate::runtime_env;
 
-pub const ENGINE_KINDS: &[&str] = &["codex", "claude", "opencode"];
+pub const ENGINE_KINDS: &[&str] = &["codex", "claude", "opencode", "hermes"];
 
 /// Resolves the engine kind for an engine id. Built-in ids are their own
 /// kind; extra instances are named `<kind>_<slug>`.
@@ -75,6 +75,7 @@ impl EngineInstanceSettings {
             let home_key = match kind {
                 "codex" => Some("CODEX_HOME"),
                 "claude" => Some("CLAUDE_CONFIG_DIR"),
+                "hermes" => Some("HERMES_HOME"),
                 _ => None,
             };
             if let Some(key) = home_key {
@@ -180,6 +181,11 @@ mod tests {
         assert_eq!(engine_kind("claude_"), "claude_");
         assert_eq!(engine_kind("claudex"), "claudex");
         assert_eq!(engine_kind("opencode"), "opencode");
+        assert_eq!(engine_kind("hermes"), "hermes");
+        assert_eq!(engine_kind("hermes_work"), "hermes");
+        assert_eq!(engine_kind("hermes_"), "hermes_");
+        assert!(is_builtin_engine_id("hermes"));
+        assert!(!is_builtin_engine_id("hermes_work"));
     }
 
     #[test]
@@ -206,6 +212,13 @@ mod tests {
         );
         assert_eq!(env.get("FOO").map(String::as_str), Some("bar"));
         assert!(settings.process_env("codex").contains_key("CODEX_HOME"));
+        assert_eq!(
+            settings
+                .process_env("hermes")
+                .get("HERMES_HOME")
+                .map(String::as_str),
+            Some("/tmp/claude2")
+        );
         assert!(!settings.process_env("opencode").contains_key("CODEX_HOME"));
     }
 

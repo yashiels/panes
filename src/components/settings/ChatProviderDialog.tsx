@@ -7,6 +7,7 @@ import {
   CHAT_PROVIDER_KINDS,
   chatProviderSlugFromLabel,
   isValidChatProviderSlug,
+  isChatProviderKind,
   type ChatProviderKind,
 } from "../../lib/engineKind";
 import { defaultChatProviderHomePath } from "../../lib/chatProviders";
@@ -68,7 +69,7 @@ export function ChatProviderDialog({
   useEffect(() => {
     if (!open) return;
     if (provider) {
-      const providerKind = provider.kind === "codex" ? "codex" : "claude";
+      const providerKind = isChatProviderKind(provider.kind) ? provider.kind : "claude";
       setKind(providerKind);
       setDisplayName(provider.displayName);
       setSlug(provider.builtIn ? "" : provider.id.slice(provider.kind.length + 1));
@@ -111,8 +112,8 @@ export function ChatProviderDialog({
       : slug
         ? defaultChatProviderHomePath(kind, slug)
         : "";
-  const binaryPlaceholder = kind === "codex" ? "codex" : "claude";
-  const homePlaceholder = kind === "codex" ? "~/.codex" : "~/.claude";
+  const binaryPlaceholder = kind;
+  const homePlaceholder = `~/.${kind}`;
   const title = editing
     ? t("settingsPage.chat.dialog.editTitle", { name: provider?.displayName ?? "" })
     : t("settingsPage.chat.dialog.addTitle");
@@ -213,7 +214,7 @@ export function ChatProviderDialog({
                     onClick={() => setKind(option)}
                   >
                     {providerKindIcon(option, 13)}
-                    {option === "codex" ? "Codex" : "Claude"}
+                    {option === "codex" ? "Codex" : option === "hermes" ? "Hermes" : "Claude"}
                   </button>
                 ))}
               </div>
@@ -272,7 +273,9 @@ export function ChatProviderDialog({
             <span className="settings-field-hint">
               {kind === "codex"
                 ? t("settingsPage.chat.dialog.homePathHintCodex")
-                : t("settingsPage.chat.dialog.homePathHintClaude")}
+                : kind === "hermes"
+                  ? t("settingsPage.chat.dialog.homePathHintHermes")
+                  : t("settingsPage.chat.dialog.homePathHintClaude")}
             </span>
           </label>
 
@@ -295,7 +298,7 @@ export function ChatProviderDialog({
             <input
               className="settings-input"
               value={launchArgs}
-              placeholder={kind === "codex" ? "--config key=value" : "--chrome"}
+              placeholder={kind === "codex" ? "--config key=value" : kind === "hermes" ? "" : "--chrome"}
               spellCheck={false}
               onChange={(event) => setLaunchArgs(event.target.value)}
             />

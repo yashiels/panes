@@ -610,6 +610,18 @@ export function getStaticCommands(
     },
   },
   {
+    id: "hermes-setup",
+    label: t("commandPalette.commands.hermesSetup"),
+    description: t("commandPalette.descriptions.hermesSetup"),
+    icon: SquareTerminal,
+    group: "navigation",
+    keywords: ["hermes", "provider", "setup", "account"],
+    action: ({ close }) => {
+      close();
+      useUiStore.getState().openSettings(null, "chat");
+    },
+  },
+  {
     id: "switch-thread",
     label: t("commandPalette.commands.switchThread"),
     description: t("commandPalette.descriptions.switchThread"),

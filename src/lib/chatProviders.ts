@@ -28,7 +28,7 @@ function shellQuotePath(value: string): string {
  */
 export function chatProviderSignInCommand(provider: ChatProviderInstance): string {
   const env: string[] = [];
-  const homeKey = provider.kind === "codex" ? "CODEX_HOME" : "CLAUDE_CONFIG_DIR";
+  const homeKey = provider.kind === "codex" ? "CODEX_HOME" : provider.kind === "hermes" ? "HERMES_HOME" : "CLAUDE_CONFIG_DIR";
   if (provider.homePath) {
     env.push(`${homeKey}=${shellQuotePath(provider.homePath)}`);
   }
@@ -37,6 +37,6 @@ export function chatProviderSignInCommand(provider: ChatProviderInstance): strin
     env.push(`${name}=${shellQuote(value)}`);
   }
   const binary = provider.binaryPath ? shellQuotePath(provider.binaryPath) : provider.kind;
-  const login = provider.kind === "codex" ? "login" : "auth login";
+  const login = provider.kind === "codex" ? "login" : provider.kind === "hermes" ? "setup" : "auth login";
   return [...env, binary, login].join(" ");
 }

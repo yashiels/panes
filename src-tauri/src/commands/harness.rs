@@ -39,6 +39,18 @@ struct HarnessDef {
 
 const HARNESSES: &[HarnessDef] = &[
     HarnessDef {
+        id: "hermes",
+        name: "Hermes",
+        description: "Nous Research's agent, integrated with Panes through ACP",
+        command: "hermes",
+        version_flag: "--version",
+        install_command: None,
+        install_args: &[],
+        install_script: Some("curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"),
+        website: "https://hermes-agent.nousresearch.com",
+        native: true,
+    },
+    HarnessDef {
         id: "codex",
         name: "Codex CLI",
         description: "Natively integrated — powers the Panes chat engine",
@@ -343,7 +355,14 @@ pub async fn set_harness_launch_args(
 // ---------------------------------------------------------------------------
 
 async fn detect_harness(def: &HarnessDef) -> HarnessInfo {
-    if let Some(path) = runtime_env::resolve_executable(def.command) {
+    let executable = if def.id == "hermes" {
+        crate::engines::hermes::launch("hermes", "Hermes", &Default::default())
+            .ok()
+            .map(|launch| launch.executable)
+    } else {
+        runtime_env::resolve_executable(def.command)
+    };
+    if let Some(path) = executable {
         if let Some(version) = get_command_version(&path, &[def.version_flag]).await {
             return HarnessInfo {
                 id: def.id.to_string(),
@@ -727,6 +746,22 @@ async fn resolve_mise_path() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hermes_harness_is_native_and_uses_the_official_installer() {
+        let hermes = HARNESSES.iter().find(|def| def.id == "hermes").unwrap();
+        assert!(hermes.native);
+        assert_eq!(hermes.command, "hermes");
+        assert_eq!(hermes.version_flag, "--version");
+        assert_eq!(
+            hermes.install_script,
+            Some("curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash")
+        );
+        assert_eq!(
+            harness_can_auto_install(hermes),
+            !cfg!(target_os = "windows")
+        );
+    }
 
     #[test]
     fn npm_package_from_install_args_matches_every_harness_definition() {

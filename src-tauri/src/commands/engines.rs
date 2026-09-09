@@ -52,6 +52,7 @@ fn chat_provider_rows(config: &AppConfig) -> Vec<ChatProviderInstanceDto> {
                     "codex" => "Codex".to_string(),
                     "claude" => "Claude".to_string(),
                     "opencode" => "OpenCode".to_string(),
+                    "hermes" => "Hermes".to_string(),
                     other => other.to_string(),
                 },
                 binary_path: None,

@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     engines::{
+        acp::AcpEngine,
         claude_sidecar::ClaudeSidecarEngine,
         codex::{CodexEngine, CodexForkedThread, CodexReviewStarted},
         opencode::OpenCodeEngine,
@@ -30,6 +31,7 @@ pub mod codex_event_mapper;
 pub mod codex_protocol;
 pub mod codex_transport;
 pub mod events;
+pub mod hermes;
 pub mod instance;
 pub mod opencode;
 
@@ -140,11 +142,18 @@ const OPENCODE_CAPABILITIES: EngineCapabilities = EngineCapabilities {
     approval_decisions: &["accept", "decline", "cancel", "accept_for_session"],
 };
 
+const HERMES_CAPABILITIES: EngineCapabilities = EngineCapabilities {
+    permission_modes: &[],
+    sandbox_modes: &[],
+    approval_decisions: &["cancel"],
+};
+
 pub fn capabilities_for_engine(engine_id: &str) -> EngineCapabilities {
     match engine_kind(engine_id) {
         "claude" => CLAUDE_CAPABILITIES,
         "codex" => CODEX_CAPABILITIES,
         "opencode" => OPENCODE_CAPABILITIES,
+        "hermes" => HERMES_CAPABILITIES,
         _ => EngineCapabilities {
             permission_modes: &[],
             sandbox_modes: &[],
@@ -187,6 +196,25 @@ pub fn normalize_approval_response_for_engine(
     engine_id: &str,
     response: Value,
 ) -> Result<Value, String> {
+    if engine_kind(engine_id) == "hermes" {
+        let object = response
+            .as_object()
+            .ok_or("Hermes permission response must be an object")?;
+        if object.len() == 1
+            && (object
+                .get("optionId")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty())
+                || object.get("decision").and_then(Value::as_str) == Some("cancel"))
+        {
+            return Ok(response);
+        }
+        return Err(
+            "Hermes permission response requires an original optionId or decision cancel"
+                .to_string(),
+        );
+    }
+
     if engine_kind(engine_id) == "opencode" {
         return normalize_opencode_approval_response(response);
     }
@@ -296,6 +324,7 @@ pub fn approval_response_route_for_engine(
     match engine_kind(engine_id) {
         "codex" => codex_event_mapper::extract_persisted_approval_route(details),
         "opencode" => opencode::extract_persisted_approval_route(details),
+        "hermes" => None,
         _ => None,
     }
 }
@@ -466,6 +495,7 @@ pub struct EngineManager {
     codex: Arc<CodexEngine>,
     claude: Arc<ClaudeSidecarEngine>,
     opencode: Arc<OpenCodeEngine>,
+    hermes: Arc<AcpEngine>,
     /// Extra provider instances configured by the user, keyed by engine id.
     instances: tokio::sync::RwLock<Vec<EngineHandle>>,
     /// Merged runtime events from every Codex instance.
@@ -479,6 +509,7 @@ pub enum EngineHandle {
     Codex(Arc<CodexEngine>),
     Claude(Arc<ClaudeSidecarEngine>),
     OpenCode(Arc<OpenCodeEngine>),
+    Acp(Arc<AcpEngine>),
 }
 
 impl EngineHandle {
@@ -487,6 +518,7 @@ impl EngineHandle {
             EngineHandle::Codex(engine) => engine.as_ref(),
             EngineHandle::Claude(engine) => engine.as_ref(),
             EngineHandle::OpenCode(engine) => engine.as_ref(),
+            EngineHandle::Acp(engine) => engine.as_ref(),
         }
     }
 
@@ -499,11 +531,13 @@ impl EngineHandle {
             EngineHandle::Codex(_) => "codex",
             EngineHandle::Claude(_) => "claude",
             EngineHandle::OpenCode(_) => "opencode",
+            EngineHandle::Acp(engine) => engine.kind(),
         }
     }
 
     async fn load_models(&self) -> Vec<ModelInfo> {
         match self {
+            EngineHandle::Acp(engine) => engine.models(),
             EngineHandle::Codex(engine) => {
                 match timeout(Duration::from_secs(4), engine.list_models_runtime()).await {
                     Ok(models) => models,
@@ -545,6 +579,7 @@ impl EngineHandle {
             EngineHandle::Codex(engine) => engine.runtime_model_fallback().await,
             EngineHandle::Claude(engine) => engine.runtime_model_fallback().await,
             EngineHandle::OpenCode(engine) => engine.runtime_model_fallback().await,
+            EngineHandle::Acp(engine) => engine.models(),
         }
     }
 
@@ -561,6 +596,7 @@ impl EngineHandle {
 
     async fn health(&self) -> EngineHealthDto {
         match self {
+            EngineHandle::Acp(engine) => engine.health_report().await,
             EngineHandle::Codex(engine) => {
                 let report = engine.health_report().await;
                 EngineHealthDto {
@@ -608,6 +644,7 @@ impl EngineHandle {
             EngineHandle::Codex(engine) => engine.prewarm().await,
             EngineHandle::Claude(engine) => engine.prewarm().await,
             EngineHandle::OpenCode(engine) => engine.prewarm().await,
+            EngineHandle::Acp(engine) => engine.prewarm().await,
         }
     }
 }
@@ -625,6 +662,11 @@ impl EngineManager {
             codex: Arc::new(CodexEngine::default()),
             claude: Arc::new(ClaudeSidecarEngine::default()),
             opencode: Arc::new(OpenCodeEngine::default()),
+            hermes: Arc::new(AcpEngine::hermes(
+                "hermes",
+                "Hermes",
+                EngineInstanceSettings::default(),
+            )),
             instances: tokio::sync::RwLock::new(Vec::new()),
             codex_runtime_events,
             runtime_bridge_started: std::sync::atomic::AtomicBool::new(false),
@@ -654,6 +696,7 @@ impl EngineManager {
         }
         let settings = EngineInstanceSettings::from_config(entry);
         match entry.kind.as_str() {
+            "hermes" => self.hermes.update_instance_settings_sync(settings),
             "codex" => {
                 if let Ok(mut current) = self.codex.instance_settings_slot().lock() {
                     *current = settings;
@@ -675,6 +718,9 @@ impl EngineManager {
         let settings = EngineInstanceSettings::from_config(entry);
         let name = entry.display_name.trim();
         match entry.kind.as_str() {
+            "hermes" => Some(EngineHandle::Acp(Arc::new(AcpEngine::hermes(
+                &entry.id, name, settings,
+            )))),
             "codex" => Some(EngineHandle::Codex(Arc::new(CodexEngine::with_instance(
                 &entry.id, name, settings,
             )))),
@@ -701,6 +747,7 @@ impl EngineManager {
             match entry.kind.as_str() {
                 "codex" => self.codex.update_instance_settings(settings).await,
                 "claude" => self.claude.update_instance_settings(settings).await,
+                "hermes" => self.hermes.update_instance_settings(settings).await,
                 _ => {}
             }
         }
@@ -716,6 +763,12 @@ impl EngineManager {
         }
         if !builtin_kinds_configured.contains(&"claude") {
             self.claude
+                .update_instance_settings(EngineInstanceSettings::default())
+                .await;
+        }
+
+        if !builtin_kinds_configured.contains(&"hermes") {
+            self.hermes
                 .update_instance_settings(EngineInstanceSettings::default())
                 .await;
         }
@@ -742,6 +795,9 @@ impl EngineManager {
                             engine.update_instance_settings(settings).await
                         }
                         EngineHandle::Claude(engine) => {
+                            engine.update_instance_settings(settings).await
+                        }
+                        EngineHandle::Acp(engine) => {
                             engine.update_instance_settings(settings).await
                         }
                         EngineHandle::OpenCode(_) => {}
@@ -786,6 +842,7 @@ impl EngineManager {
             EngineHandle::Codex(self.codex.clone()),
             EngineHandle::Claude(self.claude.clone()),
             EngineHandle::OpenCode(self.opencode.clone()),
+            EngineHandle::Acp(self.hermes.clone()),
         ];
         handles.extend(self.instances.read().await.iter().cloned());
         handles
@@ -801,6 +858,7 @@ impl EngineManager {
             "codex" => return Some(EngineHandle::Codex(self.codex.clone())),
             "claude" => return Some(EngineHandle::Claude(self.claude.clone())),
             "opencode" => return Some(EngineHandle::OpenCode(self.opencode.clone())),
+            "hermes" => return Some(EngineHandle::Acp(self.hermes.clone())),
             _ => {}
         }
         self.instances
@@ -901,7 +959,7 @@ impl EngineManager {
                     )
                 }))
             }
-            EngineHandle::OpenCode(_) => None,
+            EngineHandle::OpenCode(_) | EngineHandle::Acp(_) => None,
         });
         futures::future::join_all(futures).await
     }
@@ -1504,6 +1562,76 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn hermes_permissions_require_live_option_ids_and_never_persist_routes() {
+        for engine_id in ["hermes", "hermes_work"] {
+            let capabilities = capabilities_for_engine(engine_id);
+            assert!(capabilities.permission_modes.is_empty());
+            assert!(capabilities.sandbox_modes.is_empty());
+            assert!(validate_engine_sandbox_mode(engine_id, None).is_ok());
+            assert!(validate_engine_sandbox_mode(engine_id, Some("workspace-write")).is_err());
+            assert_eq!(
+                normalize_approval_response_for_engine(
+                    engine_id,
+                    json!({"optionId": "allow_once:42"})
+                )
+                .unwrap(),
+                json!({"optionId": "allow_once:42"})
+            );
+            assert!(normalize_approval_response_for_engine(
+                engine_id,
+                json!({"decision": "cancel"})
+            )
+            .is_ok());
+            for response in [
+                json!({"decision": "accept"}),
+                json!({"optionId": ""}),
+                json!({"optionId": "allow", "decision": "cancel"}),
+                json!({"answers": {}}),
+            ] {
+                assert!(normalize_approval_response_for_engine(engine_id, response).is_err());
+            }
+            assert_eq!(
+                approval_response_route_for_engine(
+                    engine_id,
+                    &json!({"_serverMethod": "session/request_permission", "_rawRequestId": 42})
+                ),
+                None
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn hermes_manager_selects_and_reconciles_product_instances() {
+        let config = AppConfig {
+            chat_providers: vec![provider_entry("hermes_work", "hermes", true)],
+            ..AppConfig::default()
+        };
+        let manager = EngineManager::from_config(&config);
+        for id in ["hermes", "hermes_work"] {
+            let handle = manager.handle(id).await.unwrap();
+            assert!(matches!(handle, EngineHandle::Acp(_)));
+            assert_eq!(handle.id(), id);
+            assert_eq!(handle.kind(), "hermes");
+            assert!(!handle.engine().supports_steering());
+            let info = handle.info().await;
+            assert_eq!(info.kind, "hermes");
+            assert!(!info.models.is_empty());
+        }
+        let before = manager.handle("hermes_work").await.unwrap();
+        manager.apply_chat_providers(&config.chat_providers).await;
+        let after = manager.handle("hermes_work").await.unwrap();
+        match (before, after) {
+            (EngineHandle::Acp(before), EngineHandle::Acp(after)) => {
+                assert!(Arc::ptr_eq(&before, &after))
+            }
+            _ => panic!("Hermes instance was not ACP"),
+        }
+        manager.apply_chat_providers(&[]).await;
+        assert!(manager.handle("hermes_work").await.is_none());
+        assert!(manager.handle("hermes").await.is_some());
     }
 
     fn provider_entry(id: &str, kind: &str, enabled: bool) -> ChatProviderInstanceConfig {

@@ -177,7 +177,8 @@
       "codexReview": "Start Codex Review",
       "settleThread": "Settle Thread",
       "unsettleThread": "Un-settle Thread",
-      "markThreadUnread": "Mark Thread Unread"
+      "markThreadUnread": "Mark Thread Unread",
+      "hermesSetup": "Set up Hermes"
     },
     "descriptions": {
       "switchThread": "Browse recent threads",
@@ -185,7 +186,8 @@
       "codexFork": "Create a new branch from the current thread",
       "codexCompact": "Compress the thread context window",
       "codexRollback": "Undo the most recent turns",
-      "codexReview": "Review uncommitted changes with Codex"
+      "codexReview": "Review uncommitted changes with Codex",
+      "hermesSetup": "Manage the Hermes install, configuration directory, and account"
     },
     "group": {
       "search": "Search",
@@ -447,7 +449,8 @@
       "kiro": "AWS's coding CLI focused on structured, agent-style development workflows",
       "opencode": "Open-source coding assistant for chat, edits, and terminal workflows",
       "kilo-code": "Lightweight coding assistant CLI for everyday code and repo tasks",
-      "factory-droid": "Factory's autonomous coding agent for larger implementation tasks"
+      "factory-droid": "Factory's autonomous coding agent for larger implementation tasks",
+      "hermes": "Hermes Agent by Nous Research, with chat, tools, and permission requests"
     }
   },
   "editor": {
@@ -663,7 +666,7 @@
     },
     "chat": {
       "providers": "Providers",
-      "providersDescription": "Each provider is an install or account of Codex or Claude. Add one to run a second account side by side.",
+      "providersDescription": "Each provider is an install or account of Codex, Claude, or Hermes. Add one to run a second account side by side.",
       "addProvider": "Add provider",
       "defaultInstall": "Default install from your PATH",
       "sharedInstall": "Shares the default install and login",
@@ -708,7 +711,8 @@
         "duplicateId": "A provider with id {{id}} already exists.",
         "invalidVariable": "{{name}} is not a valid environment variable name.",
         "add": "Add",
-        "nameHint": "Shown in the model picker."
+        "nameHint": "Shown in the model picker.",
+        "homePathHintHermes": "Hermes config and credentials directory (HERMES_HOME). Run setup for each account."
       },
       "ownLogin": "Own login in {{path}}",
       "signIn": "Sign in",

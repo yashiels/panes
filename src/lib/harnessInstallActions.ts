@@ -7,6 +7,7 @@ export const HARNESS_INSTALL_COMMANDS: Readonly<Record<string, string>> = {
   antigravity: "curl -fsSL https://antigravity.google/cli/install.sh | bash",
   kiro: "curl -fsSL https://cli.kiro.dev/install | bash",
   opencode: "npm install -g opencode-ai",
+  hermes: "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
   "kilo-code": "npm install -g @kilocode/cli",
   "factory-droid": "curl -fsSL https://app.factory.ai/cli | sh",
 };

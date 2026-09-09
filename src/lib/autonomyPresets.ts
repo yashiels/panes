@@ -75,6 +75,7 @@ export function autonomyPresetDescriptionKey(
  * autonomy there.
  */
 export function availableAutonomyPresets(engineId: ChatEngineId): AutonomyPresetId[] {
+  if (engineKind(engineId) === "hermes") return ["inherit"];
   if (engineKind(engineId) === "opencode") {
     return ["inherit", "read-only", "ask", "full"];
   }
@@ -91,6 +92,7 @@ export function visibleAutonomyPresets(
   engineId: ChatEngineId,
   current?: AutonomyPresetId | null,
 ): AutonomyPresetId[] {
+  if (engineKind(engineId) === "hermes") return [];
   const rungs: AutonomyPresetId[] =
     engineKind(engineId) === "opencode" ? ["ask", "full"] : ["ask", "auto", "full"];
   if (current && !rungs.includes(current) && availableAutonomyPresets(engineId).includes(current)) {
@@ -140,6 +142,7 @@ export function autonomyPresetPatch(
   options?: AutonomyPresetOptions,
 ): AutonomyPresetPatch {
   const preset = resolveAutonomyPresetForEngine(requestedPreset, engineId);
+  if (engineKind(engineId) === "hermes") return { approvalPolicy: "inherit" };
 
   if (engineKind(engineId) === "opencode") {
     switch (preset) {
